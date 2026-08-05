@@ -164,13 +164,12 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--
 /* ---------- print ---------- */
 #print{display:none}
 @media print{
-  html,body{background:#fff!important}
-  body *{visibility:hidden}
-  #print,#print *{visibility:visible}
-  #print{display:block;position:absolute;inset:0;width:100%;background:#fff}
+  html,body{background:#fff!important;margin:0!important}
+  .app,#overlay,.toast{display:none!important}
+  #print{display:block!important;position:static!important;width:auto!important;background:#fff}
   #print .doc{page-break-after:always}
   #print .doc:last-child{page-break-after:auto}
-  @page{size:A4 portrait;margin:12mm}
+  @page{size:A4 portrait;margin:10mm}
 }
 /* ===== document layout (QT / INV / RC) ===== */
 .doc{font-family:var(--sans);color:#1a2233;width:190mm;margin:0 auto;font-size:12px;position:relative;background:#fff}
@@ -1264,17 +1263,19 @@ function docHTML(id,type,opt){opt=opt||{};const j=state.jobs.find(x=>x.id===id);
  const hasVat=(j.vat!==false);const vrate=hasVat?s.vatRate:0;
  let inst=opt.inst;let instObj=null;
  if(opt.ii!=null&&j.installments&&j.installments[opt.ii]){instObj=j.installments[opt.ii];const prev=j.installments.slice(0,opt.ii).reduce((a,i)=>a+(Number(i.pct)||0),0);inst={no:instObj.no,pct:instObj.pct,prev:Math.round(prev*100)/100};}
- const pct=inst?(Number(inst.pct)||100):100;
+ const pct=inst?(Number(inst.pct)||100):100;const pctL=(+(+pct).toFixed(2));
  const dsub=inst?Math.round(c.sub*pct)/100:c.sub;const dvat=Math.round(dsub*vrate*100)/100;const dtot=Math.round((dsub+dvat)*100)/100;
- const lastPay=j.payments[j.payments.length-1];
+ const prevPct=inst?(Number(inst.prev)||0):0;const remPct=inst?Math.max(0,Math.round((100-prevPct-pct)*100)/100):0;const remPctL=(+remPct.toFixed(2));
+ const _pays=j.payments||[];const lastPay=_pays[_pays.length-1];
  const rcMethod=(instObj&&instObj.rc)?(instObj.rc.method||'-'):(lastPay?.method||'-');
  const rcDate=(instObj&&instObj.rc)?instObj.rc.date:(lastPay?.date||todayISO());
  const invDate=instObj?instObj.date:((j.inv&&j.inv.date)?j.inv.date:todayISO());
+ const invDue=instObj?dTH(addDays(instObj.date,(instObj.creditDays||s.creditDays))):dTH(c.due);
  const cfg={QT:{th:'ใบเสนอราคา',en:'QUOTATION',m:'ยืนราคาถึงวันที่',mv:dTH(addDays(j.qtDate,s.validDays)),date:j.qtDate,sigL:'ผู้เสนอราคา',sigR:'ผู้อนุมัติ / ลูกค้า'},
-  INV:{th:'ใบแจ้งหนี้ / ใบวางบิล',en:'INVOICE',m:'ครบกำหนดชำระ',mv:dTH(c.due),date:invDate,sigL:'ผู้วางบิล / ผู้มีอำนาจลงนาม',sigR:'ผู้รับวางบิล (ลูกค้า)',bank:true},
+  INV:{th:'ใบแจ้งหนี้ / ใบวางบิล',en:'INVOICE',m:'ครบกำหนดชำระ',mv:invDue,date:invDate,sigL:'ผู้วางบิล / ผู้มีอำนาจลงนาม',sigR:'ผู้รับวางบิล (ลูกค้า)',bank:true},
   RC:{th:hasVat?'ใบกำกับภาษี / ใบเสร็จรับเงิน':'ใบเสร็จรับเงิน',en:hasVat?'TAX INVOICE / RECEIPT':'RECEIPT',m:'วิธีชำระเงิน',mv:rcMethod,date:rcDate,sigL:'ผู้รับเงิน',sigR:'ผู้มีอำนาจลงนาม',receipt:true,bank:true}}[type];
  const docNo=(type==='QT')?j.id:j.id.replace(/^[A-Za-z]+/,type);
- const rows=j.items.map((it,n)=>`<tr><td class="c">${n+1}</td><td>${esc(it.desc)}</td><td class="c">${B0(it.qty)}</td><td class="c">${esc(it.unit)}</td><td class="n">${B(it.price)}</td><td class="n">${B((Number(it.qty)||0)*(Number(it.price)||0))}</td></tr>`).join('')+Array.from({length:Math.max(0,8-j.items.length)}).map(()=>`<tr><td class="c">&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>`).join('');
+ const rows=j.items.map((it,n)=>{const full=(Number(it.qty)||0)*(Number(it.price)||0);const bill=Math.round(full*pct)/100;const rem=Math.round(full*remPct)/100;return inst?`<tr><td class="c">${n+1}</td><td>${esc(it.desc)}</td><td class="c">${B0(it.qty)}</td><td class="c">${esc(it.unit)}</td><td class="n">${B(full)}</td><td class="n" style="font-weight:700;color:#0d4fc4">${B(bill)}</td><td class="n">${B(rem)}</td></tr>`:`<tr><td class="c">${n+1}</td><td>${esc(it.desc)}</td><td class="c">${B0(it.qty)}</td><td class="c">${esc(it.unit)}</td><td class="n">${B(it.price)}</td><td class="n">${B(full)}</td></tr>`;}).join('')+Array.from({length:Math.max(0,(inst?4:8)-j.items.length)}).map(()=>`<tr><td class="c">&nbsp;</td><td></td><td></td><td></td><td></td><td></td>${inst?'<td></td>':''}</tr>`).join('');
  const logo=s.logo?`<img src="${s.logo}" style="max-height:50px;max-width:150px;margin-bottom:8px">`:'';
  const stamp=(cfg.receipt||(type==='INV'&&c.pay==='paid'))?`<div class="stamp">ชำระเงินแล้ว</div>`:'';
  const bankBlock=cfg.bank?`<div class="bankcard"><b>ช่องทางชำระเงิน</b> · ธนาคาร${esc(s.bank)} · ชื่อบัญชี ${esc(s.accName)} · เลขที่ ${esc(s.accNo)} · สาขา ${esc(s.bankBranch)}</div>`:'';
@@ -1288,11 +1289,11 @@ function docHTML(id,type,opt){opt=opt||{};const j=state.jobs.find(x=>x.id===id);
   <div class="dh"><div>${logo}<div class="co-n">${esc(s.companyName)}</div><div class="co-i">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)} (${esc(s.branch)})<br>โทร. ${esc(s.phone)}${s.email?' · '+esc(s.email):''}${s.website?' · '+esc(s.website):''}</div></div>
    <div class="badge"><div class="tt">${cfg.th}</div><div class="te">${cfg.en}</div></div></div>
   <div class="parties"><div class="pcard"><div class="pt">ลูกค้า / ผู้ซื้อ (BILL TO)</div><div class="pn">${esc(cu.name||'')}</div><div class="pa">${esc(cu.address||'')}<br>เลขประจำตัวผู้เสียภาษี ${esc(cu.taxId||'-')}${(cu.phone||cu.contact)?'<br>โทร. '+esc(cu.phone||'-')+(cu.contact?' · ผู้ติดต่อ '+esc(cu.contact):''):''}</div></div>
-   <div class="pcard meta"><div class="kv"><span>เลขที่เอกสาร</span><b>${docNo}</b></div><div class="kv"><span>วันที่</span><b>${dTH(cfg.date)}</b></div><div class="kv"><span>${cfg.m}</span><b>${cfg.mv}</b></div></div></div>
+   <div class="pcard meta"><div class="kv"><span>เลขที่เอกสาร</span><b>${docNo}</b></div><div class="kv"><span>วันที่</span><b>${dTH(cfg.date)}</b></div><div class="kv"><span>${cfg.m}</span><b>${cfg.mv}</b></div>${inst?`<div class="kv"><span>งวดที่</span><b>${inst.no||''} · เบิก ${pctL}%</b></div>`:''}</div></div>
   ${j.project?`<div class="projbar"><span class="pl">โครงการ</span><span class="pv">${esc(j.project)}</span></div>`:''}
-  <table class="it"><thead><tr><th class="c">ลำดับ</th><th>รายละเอียด</th><th class="c">จำนวน</th><th class="c">หน่วย</th><th class="n">ราคา/หน่วย</th><th class="n">จำนวนเงิน</th></tr></thead><tbody>${rows}</tbody></table>
-  <div class="btm"><div class="lft"><div class="baht">(ตัวอักษร) ${bahttext(c.total)}</div>${bankBlock}${rcNote}${notesHtml}</div>
-   <div class="tot"><div class="tr"><span>รวมเป็นเงิน</span><b>${B(c.sub)}</b></div>${hasVat?`<div class="tr"><span>ภาษีมูลค่าเพิ่ม ${(vrate*100).toFixed(0)}%</span><b>${B(c.vat)}</b></div>`:''}<div class="tr g"><span>รวมทั้งสิ้น</span><span>${B(c.total)}</span></div></div></div>
+  <table class="it"><thead><tr>${inst?`<th class="c">ลำดับ</th><th>รายละเอียด</th><th class="c">จำนวน</th><th class="c">หน่วย</th><th class="n">จำนวนเงิน</th><th class="n">ยอดเบิก (${pctL}%)</th><th class="n">ยอดคงเหลือ</th>`:`<th class="c">ลำดับ</th><th>รายละเอียด</th><th class="c">จำนวน</th><th class="c">หน่วย</th><th class="n">ราคา/หน่วย</th><th class="n">จำนวนเงิน</th>`}</tr></thead><tbody>${rows}</tbody></table>
+  <div class="btm"><div class="lft"><div class="baht">(ตัวอักษร) ${bahttext(inst?dtot:c.total)}</div>${bankBlock}${rcNote}${notesHtml}</div>
+   <div class="tot">${inst?`<div class="tr"><span>มูลค่างานตามสัญญา</span><b>${B(c.sub)}</b></div><div class="tr" style="color:#0d4fc4"><span>${type==='RC'?'รับชำระงวดนี้':'วางบิลงวดนี้'} (${pctL}%)</span><b>${B(dsub)}</b></div>`:`<div class="tr"><span>รวมเป็นเงิน</span><b>${B(c.sub)}</b></div>`}${hasVat?`<div class="tr"><span>ภาษีมูลค่าเพิ่ม ${(vrate*100).toFixed(0)}%</span><b>${B(inst?dvat:c.vat)}</b></div>`:''}<div class="tr g"><span>รวมทั้งสิ้น</span><span>${B(inst?dtot:c.total)}</span></div></div></div>
   <div class="sign"><div class="s"><div class="sl"></div>${signName?`<div class="snm">( ${signName} )</div>`:''}${cfg.sigL}${signTitle?`<div style="color:#9aa4b5">${signTitle}</div>`:''}<div style="margin-top:3px;color:#9aa4b5">วันที่ ......./......./.......</div></div><div class="s"><div class="sl"></div>${cfg.sigR}<div style="margin-top:3px;color:#9aa4b5">วันที่ ......./......./.......</div></div></div>
   <div class="foot">ขอบคุณที่ให้ความไว้วางใจใช้บริการ • เอกสารจัดทำโดยระบบบัญชีของ ${esc(s.companyName)}</div>
  </div></div>`;
