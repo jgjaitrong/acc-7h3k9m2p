@@ -270,6 +270,21 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--
 .dpk>input.dpk-cal::-webkit-datetime-edit,.dpk>input.dpk-cal::-webkit-inner-spin-button,.dpk>input.dpk-cal::-webkit-clear-button{display:none!important}
 .dpk>input.dpk-cal::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer;padding:0;margin:0}
 @media(max-width:820px){.side{transform:translateX(-100%);transition:.25s}.side.open{transform:none}.main{margin-left:0}.top{padding:16px 18px}.content{padding:20px 18px}.stats{grid-template-columns:1fr}.row2,.row3{grid-template-columns:1fr}.menu-btn{display:flex!important}}
+.sugwrap{position:relative;flex:1;min-width:240px}
+.sugwrap>input{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:9px;font-family:inherit;font-size:13.5px;box-sizing:border-box}
+.sugbox{position:absolute;z-index:60;left:0;right:0;top:calc(100% + 5px);background:#fff;border:1px solid var(--line);border-radius:11px;box-shadow:0 12px 30px rgba(20,40,80,.16);max-height:320px;overflow:auto}
+.sughd{padding:8px 13px;font-size:11.5px;font-weight:700;color:var(--muted);border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff}
+.sugit{display:flex;align-items:center;gap:10px;padding:9px 13px;cursor:pointer;border-bottom:1px solid #f2f5fa}
+.sugit:last-child{border-bottom:none}
+.sugit:hover{background:var(--brand-100)}
+.sugcode{font-weight:700;color:var(--brand-d);font-family:ui-monospace,Menlo,monospace;font-size:12.5px;min-width:62px}
+.sugname{flex:1;font-size:13px;color:var(--ink)}
+.sugn{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.sugempty{padding:11px 13px;font-size:12.5px;color:var(--muted);line-height:1.6}
+.custchip{display:inline-flex;align-items:center;gap:7px;background:var(--brand-100);border:1px solid #cfe0f8;color:var(--brand-d);border-radius:20px;padding:5px 6px 5px 12px;font-size:13px;white-space:nowrap}
+.custchip b{font-family:ui-monospace,Menlo,monospace}
+.custchip button{border:none;background:#dbe7fa;color:var(--brand-d);border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:12px;line-height:1}
+.custchip button:hover{background:#c3d8f5}
 .whtbar{display:flex;align-items:flex-start;gap:10px;background:var(--brand-100);border:1px solid #cfe0f8;border-radius:10px;padding:11px 13px;margin:4px 0 12px;font-size:13px;line-height:1.6;cursor:pointer}
 .whtbar input{margin-top:3px;width:17px;height:17px;flex:0 0 auto;cursor:pointer}
 .menu-btn{display:none;width:38px;height:38px;border-radius:9px;background:var(--surface);border:1px solid var(--line);align-items:center;justify-content:center}
@@ -483,12 +498,17 @@ function cust(code){return state.customers.find(c=>c.code===code)||null;}
 /* ---- installment-aware helpers (no compute() call inside instSub/instAmt to avoid recursion) ---- */
 function instSub(j,pct){const sub=(j.items||[]).reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.price)||0),0);return Math.round(sub*(Number(pct)||0))/100;}
 function instAmt(j,pct){const s=instSub(j,pct);const v=(j.vat===false)?0:Math.round(s*state.settings.vatRate*100)/100;return Math.round((s+v)*100)/100;}
+function jobSub(j){return Math.round((j.items||[]).reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.price)||0),0)*100)/100;}
+/* ยอดก่อน VAT ของงวดหนึ่ง — รองรับทั้งกรอกเป็น % และกรอกเป็นจำนวนเงินบาท */
+function instBase(j,it){if(!it)return 0;if(it.mode==='baht'&&isFinite(Number(it.amt)))return Math.round((Number(it.amt)||0)*100)/100;return instSub(j,it.pct);}
+function instTot(j,it){const b=instBase(j,it);const v=(j.vat===false)?0:Math.round(b*state.settings.vatRate*100)/100;return Math.round((b+v)*100)/100;}
+function instPctOf(j,it){const sub=jobSub(j);if(!sub)return 0;return Math.round(instBase(j,it)/sub*10000)/100;}
 function jobReceipts(j){var a=(j.payments||[]).slice();(j.installments||[]).forEach(function(i){if(i.rc&&i.rc.issued)a.push({date:i.rc.date,method:i.rc.method,amount:Number(i.rc.amount)||0,wht:Number(i.rc.wht)||0});});return a;}
 function jobBilled(j){return !!(j.inv&&j.inv.issued)||((j.installments||[]).length>0);}
 function jobRcDone(j){return !!j.rcIssued||(j.installments||[]).some(function(i){return i.rc&&i.rc.issued;});}
 function billDate(j){return (j.inv&&j.inv.date)||((j.installments||[])[0]&&j.installments[0].date)||j.qtDate;}
 /* billing events: one row per installment (or the single full invoice) — {date, sub, total} */
-function billEvents(j){const insts=j.installments||[];if(insts.length)return insts.map(function(i){var s=instSub(j,i.pct);return {date:i.date,sub:s,total:instAmt(j,i.pct)};});if(j.inv&&j.inv.issued){var c=compute(j);return [{date:j.inv.date,sub:c.sub,total:c.total}];}return [];}
+function billEvents(j){const insts=j.installments||[];if(insts.length)return insts.map(function(i){var s=instBase(j,i);return {date:i.date,sub:s,total:instTot(j,i)};});if(j.inv&&j.inv.issued){var c=compute(j);return [{date:j.inv.date,sub:c.sub,total:c.total}];}return [];}
 function compute(j){
  const sub=(j.items||[]).reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.price)||0),0);
  const rate=(j.vat===false)?0:state.settings.vatRate;
@@ -500,11 +520,11 @@ function compute(j){
  const insts=j.installments||[];const hasInst=insts.length>0;
  const billed=jobBilled(j);
  let billedAmt=0;
- if(hasInst)billedAmt=Math.round(insts.reduce((a,i)=>a+instAmt(j,i.pct),0)*100)/100;
+ if(hasInst)billedAmt=Math.round(insts.reduce((a,i)=>a+instTot(j,i),0)*100)/100;
  else if(j.inv&&j.inv.issued)billedAmt=total;
  const outstanding=Math.round((billedAmt-settled)*100)/100;   /* billed but not yet received (true AR) */
  const bal=Math.round((total-settled)*100)/100;                /* remaining to collect on whole job */
- const sumPct=hasInst?insts.reduce((a,i)=>a+(Number(i.pct)||0),0):100;
+ const sumPct=hasInst?(sub?Math.round(insts.reduce((a,i)=>a+instBase(j,i),0)/sub*10000)/100:0):100;
  let pay='none';
  if(billed){if(outstanding<=0.005&&sumPct>=99.5)pay='paid';else if(settled>0)pay='partial';else pay='pending';}
  let due=null,overdue=0;
@@ -836,7 +856,7 @@ function inMonth(iso,mk){return mk==='all'||(iso&&iso.slice(0,7)===mk);}
 function setVatMonth(m){vatMonth=m;vatSel.clear();viewVat();}
 function setWht(v){state.settings.whtRate=(parseFloat(v)||0)/100;save();viewVat();}
 function rcTaxEvents(){const out=[];state.jobs.forEach(j=>{const vatable=(j.vat!==false);const rate=vatable?state.settings.vatRate:0;const insts=j.installments||[];
-  if(insts.length){insts.forEach((i,ii)=>{if(i.rc&&i.rc.issued){const base=instSub(j,i.pct);out.push({date:i.rc.date,jobId:j.id,key:j.id+'#i'+ii,vatable:vatable,cust:cust(j.customerCode)?.name||'',base:base,vat:Math.round(base*rate*100)/100,docNo:docNumOf(j,'RC',i.no),note:'งวดที่ '+i.no});}});}
+  if(insts.length){insts.forEach((i,ii)=>{if(i.rc&&i.rc.issued){const base=instBase(j,i);out.push({date:i.rc.date,jobId:j.id,key:j.id+'#i'+ii,vatable:vatable,cust:cust(j.customerCode)?.name||'',base:base,vat:Math.round(base*rate*100)/100,docNo:docNumOf(j,'RC',i.no),note:'งวดที่ '+i.no});}});}
   else if(j.rcIssued){const c=compute(j);const pays=(j.payments||[]);
    if(!pays.length){out.push({date:billDate(j),jobId:j.id,key:j.id+'#full',vatable:vatable,cust:cust(j.customerCode)?.name||'',base:c.sub,vat:c.vat,docNo:docNumOf(j,'RC'),note:''});}
    else{const multi=pays.length>1;
@@ -927,7 +947,27 @@ function exportVatSel(){try{if(!vatSel.size){toast('ยังไม่ได้�
  const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(B2);ws['!cols']=[{wch:20},{wch:26},{wch:12},{wch:13},{wch:12},{wch:14},{wch:15},{wch:8}];XLSX.utils.book_append_sheet(wb,ws,'ยอดต้องได้รับโอน');
  XLSX.writeFile(wb,'ยอดรับโอน-เลือก-'+todayISO()+'.xlsx');toast('ส่งออก '+rcE.length+' รายการที่เลือกแล้ว','ok');}catch(err){console.log(err);toast('ส่งออกไม่สำเร็จ','err');}}
 /* ============ DOCS ============ */
-let docFilter='all';let docMonth='all';let docType='QT';let docSel=new Set();let docVis=[];
+let docFilter='all';let docMonth='all';let docType='QT';let docSel=new Set();let docVis=[];let docSearch='';let docCust='';let docSugOpen=false;
+function isHold(j){return !!(j&&j.hold);}
+function reFocusSearch(){const el=document.getElementById('docSearch');if(el){el.focus();try{el.setSelectionRange(el.value.length,el.value.length);}catch(e){}}}
+function setDocSearch(v){docSearch=v;docSugOpen=true;viewDocs();reFocusSearch();}
+function clearDocSearch(){docSearch='';docCust='';docSugOpen=false;viewDocs();reFocusSearch();}
+function openDocSug(){if(docSugOpen)return;docSugOpen=true;viewDocs();reFocusSearch();}   /* กันเรียกซ้ำไม่รู้จบจาก onfocus */
+function closeDocSug(){if(!docSugOpen)return;docSugOpen=false;viewDocs();}
+function pickDocCust(code){docCust=code;docSearch='';docSugOpen=false;viewDocs();}
+function clearDocCust(){docCust='';viewDocs();}
+/* รายชื่อลูกค้าที่ตรงกับคำค้น พร้อมจำนวนงาน — ใช้ทำรายการให้เลือก */
+function custSuggest(q){q=String(q||'').trim().toLowerCase();
+ const cnt={};state.jobs.forEach(j=>{cnt[j.customerCode]=(cnt[j.customerCode]||0)+1;});
+ let list=state.customers.slice();
+ if(q)list=list.filter(c=>[c.code,c.name,c.taxId,c.contact].some(x=>String(x==null?'':x).toLowerCase().indexOf(q)>=0));
+ list.sort((a,b)=>natCmp(a.code,b.code));
+ return list.map(c=>({c,n:cnt[c.code]||0}));}
+function docSearchKey(e){if(e.key==='Escape'){closeDocSug();}else if(e.key==='Enter'){const m=custSuggest(docSearch);if(m.length===1)pickDocCust(m[0].c.code);else closeDocSug();}}
+function jobMatch(j,q){if(!q)return true;q=q.trim().toLowerCase();if(!q)return false;
+ const cu=cust(j.customerCode)||{};
+ return [cu.name,cu.code,cu.contact,cu.taxId,j.id,j.project,j.customerCode,(j.items||[]).map(i=>i.desc).join(' ')]
+   .some(x=>String(x==null?'':x).toLowerCase().indexOf(q)>=0);}
 let docSort={k:'no',dir:1};
 function setDocSort(k){if(docSort.k===k)docSort.dir*=-1;else{docSort.k=k;docSort.dir=(k==='date'||k==='total')?-1:1;}viewDocs();}
 const DTYPES=[['QT','ใบเสนอราคา'],['INV','ใบวางบิล / ใบแจ้งหนี้'],['RC','ใบเสร็จ/ใบกำกับภาษี']];
@@ -945,7 +985,7 @@ function pickInstPrint(id,type){const j=state.jobs.find(x=>x.id===id);if(!j)retu
  if(avail.length===1){printDoc(id,type,{ii:avail[0].idx});return;}
  modal(`<div class="mh"><h3>เลือกงวดที่จะพิมพ์ — ${esc(id)}</h3><button class="x" onclick="closeModal()">✕</button></div>
  <div class="mb"><div class="hint" style="margin-bottom:10px">งานนี้วางบิลแบ่งงวด กรุณาเลือกงวดที่ต้องการพิมพ์ (แต่ละงวดคิดเงินเฉพาะสัดส่วนของงวดนั้น)</div>
- <div style="display:flex;flex-direction:column;gap:8px">${avail.map(x=>`<button class="btn btn-g" style="justify-content:space-between;width:100%" onclick="closeModal();printDoc('${esc(id)}','${type}',{ii:${x.idx}})"><span>งวดที่ ${x.it.no} · ${x.it.pct}%</span><b>${B(instAmt(j,x.it.pct))}</b></button>`).join('')}</div></div>
+ <div style="display:flex;flex-direction:column;gap:8px">${avail.map(x=>`<button class="btn btn-g" style="justify-content:space-between;width:100%" onclick="closeModal();printDoc('${esc(id)}','${type}',{ii:${x.idx}})"><span>งวดที่ ${x.it.no} · ${x.it.pct}%</span><b>${B(instTot(j,x.it))}</b></button>`).join('')}</div></div>
  <div class="mf"><button class="btn btn-g" onclick="closeModal()">ปิด</button></div>`);}
 function printSelDocs(){const ids=docVis.filter(id=>docSel.has(id));if(!ids.length){toast('ยังไม่ได้เลือกเอกสาร','err');return;}
  const list=[];let skipped=0;
@@ -1013,15 +1053,42 @@ function exportSelDocLayout(){
 
 function viewDocs(){
  const base=state.jobs.filter(j=>docMonth==='all'||(j.qtDate&&j.qtDate.slice(0,7)===docMonth));
- const counts={all:base.length,qt:0,inv:0,pending:0,overdue:0,paid:0};
- base.forEach(j=>{const c=compute(j);if(!jobBilled(j))counts.qt++;if(jobBilled(j))counts.inv++;if(c.pay==='pending'||c.pay==='partial')counts.pending++;if(c.overdue>0)counts.overdue++;if(c.pay==='paid')counts.paid++;});
+ const counts={all:base.length,qt:0,inv:0,pending:0,overdue:0,paid:0,hold:0};
+ base.forEach(j=>{const c=compute(j);const h=isHold(j);
+  if(h)counts.hold++;
+  if(!jobBilled(j)&&!h)counts.qt++;                       /* งานที่ HOLD ไว้ ไม่นับว่าค้างวางบิล */
+  if(jobBilled(j))counts.inv++;
+  if((c.pay==='pending'||c.pay==='partial')&&!h)counts.pending++;
+  if(c.overdue>0&&!h)counts.overdue++;
+  if(c.pay==='paid')counts.paid++;});
  const chip=(k,l)=>`<button class="chip-f ${docFilter===k?'on':''}" onclick="docFilter='${k}';viewDocs()">${l}<span class="c">${counts[k]}</span></button>`;
  const mchip=(k,l,n)=>`<button class="chip-f ${docMonth===k?'on':''}" onclick="docMonth='${k}';viewDocs()">${l}${n!=null?`<span class="c">${n}</span>`:''}</button>`;
  const months=docMonthList();
  let html=`<div class="chips">${mchip('all','ทุกเดือน',state.jobs.length)}${months.map(m=>mchip(m.k,m.label,m.n)).join('')}</div>`;
- html+=`<div class="chips">${chip('all','ทั้งหมด')}${chip('qt','ยังไม่วางบิล')}${chip('inv','วางบิลแล้ว')}${chip('pending','รอชำระ')}${chip('overdue','เกินกำหนด')}${chip('paid','ชำระครบ')}</div>`;
+ html+=`<div class="chips">${chip('all','ทั้งหมด')}${chip('qt','ยังไม่วางบิล')}${chip('inv','วางบิลแล้ว')}${chip('pending','รอชำระ')}${chip('overdue','เกินกำหนด')}${chip('paid','ชำระครบ')}${counts.hold?chip('hold','พักไว้ (HOLD)'):''}</div>`;
+ html+=`<div class="card" style="padding:10px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+   <span style="font-size:13px;font-weight:700;color:var(--ink-2);white-space:nowrap">🔎 ค้นหา:</span>
+   ${docCust?(()=>{const cu=cust(docCust)||{code:docCust,name:''};return `<span class="custchip"><b>${esc(cu.code)}</b> ${esc(cu.name||'')}<button title="ล้างการเลือกลูกค้า" onclick="clearDocCust()">✕</button></span>`;})():''}
+   <div class="sugwrap">
+     <input id="docSearch" value="${esc(docSearch)}" autocomplete="off" placeholder="${docCust?'ค้นหาเพิ่มในลูกค้ารายนี้…':'พิมพ์รหัสลูกค้า / ชื่อบริษัท / เลขที่เอกสาร / ชื่อโครงการ'}" oninput="setDocSearch(this.value)" onfocus="openDocSug()" onkeydown="docSearchKey(event)">
+     ${(()=>{if(!docSugOpen)return '';const m=custSuggest(docSearch);if(!m.length)return docSearch?`<div class="sugbox"><div class="sugempty">ไม่พบลูกค้าที่ตรงกับ “${esc(docSearch)}” — ยังค้นหาจากเลขที่เอกสาร/ชื่อโครงการได้</div></div>`:'';
+       return `<div class="sugbox"><div class="sughd">เลือกลูกค้า (${m.length} ราย)</div>${m.slice(0,60).map(x=>`<div class="sugit" onmousedown="event.preventDefault();pickDocCust('${esc(x.c.code)}')"><span class="sugcode">${esc(x.c.code)}</span><span class="sugname">${esc(x.c.name||'')}</span><span class="sugn">${x.n} งาน</span></div>`).join('')}${m.length>60?`<div class="sugempty">แสดง 60 รายแรก — พิมพ์เพิ่มเพื่อกรองให้แคบลง</div>`:''}</div>`;})()}
+   </div>
+   ${(docSearch||docCust)?`<button class="btn btn-g btn-sm" onclick="clearDocSearch()">✕ ล้างทั้งหมด</button>`:''}
+   ${docSugOpen?`<button class="btn btn-g btn-sm" onclick="closeDocSug()">ปิดรายการ</button>`:''}
+ </div>`;
  let rows=base.map(j=>({j,c:compute(j)}));
- rows=rows.filter(({j,c})=>{if(docFilter==='all')return true;if(docFilter==='qt')return!jobBilled(j);if(docFilter==='inv')return jobBilled(j);if(docFilter==='pending')return c.pay==='pending'||c.pay==='partial';if(docFilter==='overdue')return c.overdue>0;if(docFilter==='paid')return c.pay==='paid';});
+ rows=rows.filter(({j,c})=>{const h=isHold(j);
+  if(docFilter==='all')return true;
+  if(docFilter==='hold')return h;
+  if(docFilter==='qt')return !jobBilled(j)&&!h;
+  if(docFilter==='inv')return jobBilled(j);
+  if(docFilter==='pending')return (c.pay==='pending'||c.pay==='partial')&&!h;
+  if(docFilter==='overdue')return c.overdue>0&&!h;
+  if(docFilter==='paid')return c.pay==='paid';
+  return true;});
+ if(docCust)rows=rows.filter(({j})=>j.customerCode===docCust);
+ rows=rows.filter(({j})=>jobMatch(j,docSearch));
  rows=rows.filter(({j})=>docTypeAvail(j,docType));
  {const sk=docSort.k,sd=docSort.dir;
   rows.sort((a,b)=>{let r=0;
@@ -1041,7 +1108,7 @@ function viewDocs(){
  const dth=(k,l,cls)=>sortTh(docSort.k,k,docSort.dir,l,'setDocSort',cls);
  html+=`<div class="card tbl-wrap"><table class="tbl"><thead><tr><th style="width:34px"><input type="checkbox" ${allSel?'checked':''} onclick="docSelAll(this.checked)"></th>${dth('no','เลขที่เอกสาร')}${dth('cust','ลูกค้า')}${dth('date','วันที่')}${dth('total','ยอดรวม','num')}<th>เอกสาร</th><th>สถานะชำระ</th><th style="text-align:right">การทำงาน</th></tr></thead><tbody>`;
  rows.forEach(({j,c})=>{
-  const payPill=c.pay==='paid'?'<span class="pill good"><span class="dot"></span>ชำระครบ</span>':c.pay==='partial'?'<span class="pill warn"><span class="dot"></span>ชำระบางส่วน</span>':c.pay==='pending'?(c.overdue>0?`<span class="pill crit"><span class="dot"></span>เกิน ${c.overdue} วัน</span>`:'<span class="pill warn"><span class="dot"></span>รอชำระ</span>'):'<span class="pill mute"><span class="dot"></span>ยังไม่วางบิล</span>';
+  const payPill=isHold(j)?'<span class="pill" style="background:#fff4d6;color:#8a6100;border:1px solid #ffd98a"><span class="dot" style="background:#c98a00"></span>พักไว้ (HOLD)</span>':c.pay==='paid'?'<span class="pill good"><span class="dot"></span>ชำระครบ</span>':c.pay==='partial'?'<span class="pill warn"><span class="dot"></span>ชำระบางส่วน</span>':c.pay==='pending'?(c.overdue>0?`<span class="pill crit"><span class="dot"></span>เกิน ${c.overdue} วัน</span>`:'<span class="pill warn"><span class="dot"></span>รอชำระ</span>'):'<span class="pill mute"><span class="dot"></span>ยังไม่วางบิล</span>';
   const docTags=`<span class="tag qt">QT</span> <span class="tag ${jobBilled(j)?'inv':'off'}">${j.installments&&j.installments.length?'บิลงวด':'INV'}</span> <span class="tag ${jobRcDone(j)?'rc':'off'}">RC</span>`;
   const isSel=docSel.has(j.id);const sel=isSel?'checked':'';
   const insts=j.installments||[];const isInst=insts.length>0&&docType!=='QT';
@@ -1086,7 +1153,7 @@ function openCustDocs(code){const cu=cust(code)||{code:code,name:code};
    let billCol,rcCol;
    if(insts.length){const paidN=insts.filter(i=>i.rc&&i.rc.issued).length;billCol=`<b>แบ่ง ${insts.length} งวด</b>`;rcCol=`<span class="tag ${paidN>0?'rc':'off'}">ใบเสร็จ ${paidN}/${insts.length}</span>`;}
    else if(j.inv&&j.inv.issued){billCol='เต็มจำนวน';rcCol=`<span class="tag ${j.rcIssued?'rc':'off'}">${j.rcIssued?'ออกใบเสร็จแล้ว':'ยังไม่ออกใบเสร็จ'}</span>`;}
-   else{billCol='<span style="color:var(--muted)">— ยังไม่วางบิล</span>';rcCol=`<span class="tag off">ยังไม่มีใบเสร็จ</span>`;}
+   else{billCol=isHold(j)?'<span style="color:#8a6100;font-weight:600">⏸ พักไว้ (HOLD)</span>':'<span style="color:var(--muted)">— ยังไม่วางบิล</span>';rcCol=`<span class="tag off">ยังไม่มีใบเสร็จ</span>`;}
    const payPill=c.pay==='paid'?'<span class="pill good"><span class="dot"></span>ชำระครบ</span>':c.pay==='partial'?'<span class="pill warn"><span class="dot"></span>ชำระบางส่วน</span>':c.pay==='pending'?(c.overdue>0?`<span class="pill crit"><span class="dot"></span>เกิน ${c.overdue} วัน</span>`:'<span class="pill warn"><span class="dot"></span>รอชำระ</span>'):'<span class="pill mute"><span class="dot"></span>เสนอราคา</span>';
    return `<tr style="cursor:pointer" onclick="closeModal();openJob('${j.id}')"><td class="jobid">${j.id}</td><td class="mono">${dTH(j.qtDate)}</td><td class="num" style="font-weight:600">${B(c.total)}</td><td>${billCol}</td><td>${rcCol}</td><td class="num" style="color:${c.bal>0.005&&jobBilled(j)?'var(--crit)':'inherit'}">${jobBilled(j)?B(Math.max(0,c.bal)):'-'}</td><td>${payPill}</td></tr>`;
   }).join('');
@@ -1295,12 +1362,12 @@ function openJob(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);co
  let instSec='';
  if(hasInst){
   const instRows=insts.map((it,idx)=>{
-   const amt=instAmt(j,it.pct);const paid=it.rc&&it.rc.issued;
+   const amt=instTot(j,it);const paid=it.rc&&it.rc.issued;
    const dueD=addDays(it.date,(it.creditDays!=null?it.creditDays:state.settings.creditDays));const od=(!paid&&todayISO()>dueD);
    const st=paid?'<span class="pill good"><span class="dot"></span>ชำระแล้ว</span>':(od?'<span class="pill crit"><span class="dot"></span>เกินกำหนด</span>':'<span class="pill warn"><span class="dot"></span>รอชำระ</span>');
    const act=paid
-    ?`<button class="btn btn-g btn-ic btn-sm" title="พิมพ์ใบวางบิล" onclick="printDoc('${j.id}','INV',{ii:${idx}})">${I.print}</button> <button class="btn btn-p btn-ic btn-sm" title="พิมพ์ใบเสร็จ/ใบกำกับภาษี" onclick="printDoc('${j.id}','RC',{ii:${idx}})">${I.doc}</button> <button class="btn btn-g btn-ic btn-sm" title="ยกเลิกรับเงินงวดนี้ (กดผิด)" onclick="unpayInst('${j.id}',${idx})">↩</button>`
-    :`<button class="btn btn-g btn-ic btn-sm" title="พิมพ์ใบวางบิล" onclick="printDoc('${j.id}','INV',{ii:${idx}})">${I.print}</button> <button class="btn btn-p btn-sm" title="รับเงินและออกใบเสร็จ" onclick="payInst('${j.id}',${idx})">${I.cash}รับเงิน</button> <button class="btn btn-d btn-ic btn-sm" title="ลบงวดนี้" onclick="delInst('${j.id}',${idx})">${I.trash}</button>`;
+    ?`<button class="btn btn-g btn-ic btn-sm" title="แก้ไขงวดนี้ (ยอด/วันที่/เครดิต)" onclick="editInst('${j.id}',${idx})">${I.edit}</button> <button class="btn btn-g btn-ic btn-sm" title="พิมพ์ใบวางบิล" onclick="printDoc('${j.id}','INV',{ii:${idx}})">${I.print}</button> <button class="btn btn-p btn-ic btn-sm" title="พิมพ์ใบเสร็จ/ใบกำกับภาษี" onclick="printDoc('${j.id}','RC',{ii:${idx}})">${I.doc}</button> <button class="btn btn-g btn-ic btn-sm" title="ยกเลิกรับเงินงวดนี้ (กดผิด)" onclick="unpayInst('${j.id}',${idx})">↩</button>`
+    :`<button class="btn btn-g btn-ic btn-sm" title="แก้ไขงวดนี้ (ยอด/วันที่/เครดิต)" onclick="editInst('${j.id}',${idx})">${I.edit}</button> <button class="btn btn-g btn-ic btn-sm" title="พิมพ์ใบวางบิล" onclick="printDoc('${j.id}','INV',{ii:${idx}})">${I.print}</button> <button class="btn btn-p btn-sm" title="รับเงินและออกใบเสร็จ" onclick="payInst('${j.id}',${idx})">${I.cash}รับเงิน</button> <button class="btn btn-d btn-ic btn-sm" title="ลบงวดนี้" onclick="delInst('${j.id}',${idx})">${I.trash}</button>`;
    return `<tr><td class="c" style="font-weight:700">${it.no}</td><td class="c">${it.pct}%</td><td class="num" style="font-weight:600">${B(amt)}</td><td class="mono">${dTH(it.date)}${paid?`<div style="font-size:11px;color:var(--good-ink);margin-top:2px">รับเงิน ${dTH(it.rc.date)}</div>`:`<div style="font-size:11px;color:var(--muted);margin-top:2px">ครบกำหนด ${dTH(dueD)}</div>`}</td><td>${st}</td><td style="text-align:right;white-space:nowrap">${act}</td></tr>`;
   }).join('');
   const sumPct=c.sumPct;
@@ -1319,7 +1386,7 @@ function openJob(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);co
  <div class="mb">
   <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;margin-bottom:6px">
    <div><div style="font-size:12px;color:var(--muted)">ลูกค้า</div><div style="font-weight:700;font-size:15px">${esc(cu?.name||'—')}</div><div style="font-size:12px;color:var(--ink-2)">${esc(cu?.taxId||'')}</div></div>
-   <div style="text-align:right"><div style="font-size:12px;color:var(--muted)">วันที่เสนอราคา</div><div style="font-weight:600">${dTH(j.qtDate)}</div><div style="margin-top:6px">${payPill}</div></div>
+   <div style="text-align:right"><div style="font-size:12px;color:var(--muted)">วันที่เสนอราคา</div><div style="font-weight:600">${dTH(j.qtDate)}</div><div style="margin-top:6px">${j.hold?'<span class="pill" style="background:#fff4d6;color:#8a6100;border:1px solid #ffd98a"><span class="dot" style="background:#c98a00"></span>พักไว้ (HOLD)</span> ':''}${payPill}</div></div>
   </div>
   ${j.project?`<div style="background:var(--brand-100);border:1px solid #cfe0f8;border-radius:9px;padding:8px 12px;margin-bottom:4px;font-size:13px"><span style="color:var(--muted);font-size:11px">โครงการ</span> <b style="color:var(--brand-d)">${esc(j.project)}</b></div>`:''}
   <table class="it doc" style="width:100%;font-size:12.5px;margin-top:10px"><thead><tr><th class="c" style="width:8%">#</th><th>รายละเอียด</th><th class="c">จำนวน</th><th class="c">หน่วย</th><th class="num">ราคา/หน่วย</th><th class="num">รวม</th></tr></thead><tbody>${itemRows}</tbody></table>
@@ -1331,6 +1398,7 @@ function openJob(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);co
  <div class="mf" style="justify-content:space-between;flex-wrap:wrap">
   <div style="display:flex;gap:8px;flex-wrap:wrap">
    <button class="btn btn-g btn-sm" onclick="closeModal();openQT('${j.id}')">${I.edit}แก้ไข</button>
+   <button class="btn btn-g btn-sm" style="${j.hold?'background:#fff4d6;border-color:#ffd98a;color:#8a6100;font-weight:700':''}" title="${j.hold?'เปลี่ยนกลับเป็นงานปกติ':'พักงานนี้ไว้ (ยังไม่ชัดว่าจะได้งาน)'}" onclick="toggleHold('${j.id}')">${j.hold?'▶ กลับเป็นปกติ':'⏸ HOLD'}</button>
    <button class="btn btn-g btn-sm" onclick="printDoc('${j.id}','QT')">${I.print}พิมพ์ QT</button>
    ${hasInv?`<button class="btn btn-g btn-sm" onclick="printDoc('${j.id}','INV')">${I.print}พิมพ์ INV</button>`:''}
    ${(hasInv&&j.rcIssued)?`<button class="btn btn-g btn-sm" onclick="printDoc('${j.id}','RC')">${I.print}พิมพ์ RC</button>`:''}
@@ -1339,6 +1407,19 @@ function openJob(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);co
   <div style="display:flex;gap:8px;flex-wrap:wrap">${actRight}</div>
  </div>`,true);
 }
+function toggleHold(id){const j=state.jobs.find(x=>x.id===id);if(!j)return;
+ if(j.hold){j.hold=false;save();closeModal();render();toast('เปลี่ยนกลับเป็นงานปกติแล้ว','ok');setTimeout(()=>openJob(id),50);return;}
+ modal(`<div class="mh"><h3>พักงานนี้ไว้ (HOLD)</h3><button class="x" onclick="closeModal()">✕</button></div>
+ <div class="mb">พักงาน <b>${esc(id)}</b> ไว้ก่อนใช่หรือไม่?
+ <div style="margin-top:12px;background:#fff8e6;border:1px solid #ffe1a6;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.8;color:#8a6100">
+ ใช้กับงานที่ <b>ยังไม่ชัดว่าจะได้งานหรือไม่</b> หรือลูกค้าขอเลื่อนไว้ก่อน<br>
+ • งานนี้จะ<b>ไม่ถูกนับว่าค้างวางบิล</b> และไม่ขึ้นเตือนรอชำระ/เกินกำหนด<br>
+ • ข้อมูลและใบเสนอราคายังอยู่ครบ กดกลับเป็นปกติได้ทุกเมื่อ</div>
+ <div class="field" style="margin-top:12px"><label>หมายเหตุ (ไม่บังคับ)</label><input id="hold_note" value="${esc(j.holdNote||'')}" placeholder="เช่น รอลูกค้ายืนยัน / ชะลอโครงการ"></div></div>
+ <div class="mf"><button class="btn btn-g" onclick="openJob('${esc(id)}')">ยกเลิก</button><button class="btn btn-p" style="background:#c98a00;box-shadow:0 4px 12px rgba(201,138,0,.28)" onclick="doHold('${esc(id)}')">⏸ พักงานไว้</button></div>`);}
+function doHold(id){const j=state.jobs.find(x=>x.id===id);if(!j)return;const el=document.getElementById('hold_note');
+ j.hold=true;j.holdNote=el?el.value.trim():'';j.holdAt=todayISO();
+ save();closeModal();render();toast('พักงานนี้ไว้แล้ว (HOLD)','ok');setTimeout(()=>openJob(id),50);}
 function delJob(id){modal(`<div class="mh"><h3>ยืนยันการลบ</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการลบงาน <b>${esc(id)}</b> และเอกสารทั้งหมดที่เกี่ยวข้องใช่หรือไม่?</div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">ยกเลิก</button><button class="btn btn-d" onclick="state.jobs=state.jobs.filter(j=>j.id!=='${id}');save();closeModal();render();toast('ลบงานแล้ว','ok')">ลบ</button></div>`);}
 
 /* ----- issue invoice ----- */
@@ -1388,30 +1469,100 @@ function doUnpayInst(id,idx){const j=state.jobs.find(x=>x.id===id);if(j.installm
 function toInst(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);
  if(c.settled>0){toast('งานนี้รับเงินไปแล้ว เปลี่ยนเป็นแบ่งงวดไม่ได้','err');return;}
  j.inv=null;j.payments=[];j.rcIssued=false;save();addInst(id);}
+let instMode='pct';let instEditIdx=null;
 function fmtInstAmt(id,pct){const j=state.jobs.find(x=>x.id===id);return B(instAmt(j,Number(pct)||0));}
-function setPct(id,pct){const el=document.getElementById('ni_pct');if(el){el.value=pct;const a=document.getElementById('niAmt');if(a)a.textContent=fmtInstAmt(id,pct);}}
-function addInst(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);const insts=j.installments||[];
- const usedPct=insts.reduce((a,i)=>a+(Number(i.pct)||0),0);const remain=Math.max(0,Math.round((100-usedPct)*100)/100);const nextNo=insts.reduce((a,i)=>Math.max(a,Number(i.no)||0),0)+1;const defPct=remain>0?remain:30;
- modal(`<div class="mh"><h3>เพิ่มงวดวางบิล — ${j.id}</h3><button class="x" onclick="closeModal()">✕</button></div>
+function setInstMode(id,m){instMode=m;
+ const bp=document.getElementById('ni_mode_pct'),bb=document.getElementById('ni_mode_baht');
+ if(bp)bp.className='chip-f '+(m==='pct'?'on':'');if(bb)bb.className='chip-f '+(m==='baht'?'on':'');
+ const wp=document.getElementById('ni_wrap_pct'),wb=document.getElementById('ni_wrap_baht');
+ if(wp)wp.style.display=(m==='pct')?'':'none';if(wb)wb.style.display=(m==='baht')?'':'none';
+ const qp=document.getElementById('ni_quick_pct'),qb=document.getElementById('ni_quick_baht');
+ if(qp)qp.style.display=(m==='pct')?'':'none';if(qb)qb.style.display=(m==='baht')?'':'none';
+ instPreview(id);}
+function setPct(id,pct){const el=document.getElementById('ni_pct');if(el)el.value=pct;instPreview(id);}
+function setInstBaht(id,v){const el=document.getElementById('ni_baht');if(el)el.value=v;instPreview(id);}
+function instPreview(id){const j=state.jobs.find(x=>x.id===id);if(!j)return;
+ const sub=jobSub(j);const vr=(j.vat===false)?0:(state.settings.vatRate||0);
+ let base;
+ if(instMode==='baht')base=Math.round((Number((document.getElementById('ni_baht')||{}).value)||0)*100)/100;
+ else base=Math.round(sub*(Number((document.getElementById('ni_pct')||{}).value)||0))/100;
+ const pctShown=sub?Math.round(base/sub*10000)/100:0;
+ const vat=Math.round(base*vr*100)/100, tot=Math.round((base+vat)*100)/100;
+ const used=(j.installments||[]).reduce((a,i)=>a+instBase(j,i),0);
+ const left=Math.round((sub-used-base)*100)/100;
+ const el=document.getElementById('niAmt');if(!el)return;
+ el.innerHTML=`ยอดงวดนี้ก่อน VAT <b>${B(base)}</b> (${(+pctShown.toFixed(2))}%)`+
+  (vr?` + VAT ${(vr*100).toFixed(0)}% ${B(vat)}`:'')+` = <b style="font-size:14px">${B(tot)}</b>`+
+  `<div style="margin-top:4px;color:${left<-0.005?'var(--crit)':'var(--muted)'};font-weight:600">`+
+  (left<-0.005?`⚠️ เกินมูลค่างานตามสัญญา ${B(-left)}`:`คงเหลือหลังงวดนี้ ${B(left)}`)+`</div>`;}
+function addInst(id){instForm(id,null);}
+function editInst(id,idx){instForm(id,idx);}
+function instForm(id,idx){const j=state.jobs.find(x=>x.id===id);if(!j)return;const insts=j.installments||[];
+ const editing=(idx!=null&&insts[idx]);const cur=editing?insts[idx]:null;
+ const sub=jobSub(j);
+ const usedBase=insts.reduce((a,i,k)=>a+((editing&&k===idx)?0:instBase(j,i)),0);   /* ไม่นับงวดที่กำลังแก้ */
+ const remainBaht=Math.round((sub-usedBase)*100)/100;
+ const usedPct=sub?Math.round(usedBase/sub*10000)/100:0;
+ const remain=Math.max(0,Math.round((100-usedPct)*100)/100);
+ const nextNo=editing?cur.no:(insts.reduce((a,i)=>Math.max(a,Number(i.no)||0),0)+1);
+ const defPct=editing?(Number(cur.pct)||0):(remain>0?remain:30);
+ const defBaht=editing?instBase(j,cur):(remainBaht>0?remainBaht:0);
+ const defDate=editing?cur.date:todayISO();
+ const defCredit=editing?(cur.creditDays!=null?cur.creditDays:state.settings.creditDays):state.settings.creditDays;
+ const paid=!!(editing&&cur.rc&&cur.rc.issued);
+ instMode=editing?((cur.mode==='baht')?'baht':'pct'):'pct';
+ instEditIdx=editing?idx:null;
+ modal(`<div class="mh"><h3>${editing?'แก้ไขงวดวางบิล':'เพิ่มงวดวางบิล'} — ${esc(j.id)}</h3><button class="x" onclick="closeModal()">✕</button></div>
  <div class="mb">
-  <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:10px;padding:12px 14px;margin-bottom:16px"><span>ราคาเต็มทั้งงาน <b>${B(c.total)}</b></span><span>วางบิลไปแล้ว <b>${(+usedPct.toFixed(2))}%</b></span><span style="color:var(--brand-d)">วางบิลได้อีก <b>${(+remain.toFixed(2))}%</b></span></div>
-  <div class="row3"><div class="field"><label>งวดที่</label><input id="ni_no" type="number" value="${nextNo}" min="1"></div><div class="field"><label>สัดส่วนงวดนี้ (%)</label><input id="ni_pct" type="number" step="any" value="${defPct}" min="0.01" max="100" oninput="var a=document.getElementById('niAmt');if(a)a.textContent=fmtInstAmt('${id}',this.value)"></div><div class="field"><label>เครดิต (วัน)</label><input id="ni_credit" type="number" value="${state.settings.creditDays}"></div></div>
-  <div class="field"><label>วันที่วางบิล</label>${dpick('ni_date',todayISO())}</div>
-  <div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 8px"><span style="font-size:12px;color:var(--muted);align-self:center">แบ่งงวดยอดนิยม:</span><button class="btn btn-g btn-sm" onclick="setPct('${id}',30)">30%</button><button class="btn btn-g btn-sm" onclick="setPct('${id}',40)">40%</button><button class="btn btn-g btn-sm" onclick="setPct('${id}',50)">50%</button>${remain>0?`<button class="btn btn-g btn-sm" onclick="setPct('${id}',${remain})">งวดสุดท้าย (${(+remain.toFixed(2))}%)</button>`:''}</div>
-  <div class="hint">จำนวนเงินงวดนี้ (รวม VAT): <b id="niAmt" style="color:var(--brand-d)">${fmtInstAmt(id,defPct)}</b> — เมื่อเพิ่มแล้ว จะพิมพ์ใบวางบิลและออกใบเสร็จรับเงิน/ใบกำกับภาษีได้เมื่อลูกค้าชำระ</div>
+  ${paid?`<div style="background:#fff8e6;border:1px solid #ffe1a6;border-radius:10px;padding:11px 13px;margin-bottom:12px;font-size:13px;line-height:1.7;color:#8a6100"><b>⚠️ งวดนี้รับเงินและออกใบเสร็จไปแล้ว</b><br>ถ้าแก้ยอด ใบเสร็จ/รายงานภาษีของงวดนี้จะเปลี่ยนตาม — แก้เฉพาะกรณีกรอกผิดเท่านั้น</div>`:''}
+  <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+    <span>มูลค่างานตามสัญญา (ก่อน VAT) <b>${B(sub)}</b></span>
+    <span>งวดอื่นวางบิลแล้ว <b>${B(usedBase)}</b></span>
+    <span style="color:var(--brand-d)">คงเหลือวางบิลได้ <b>${B(remainBaht)}</b></span></div>
+  <div class="row2"><div class="field"><label>งวดที่</label><input id="ni_no" type="number" value="${nextNo}" min="1"></div>
+   <div class="field"><label>เครดิต (วัน)</label><input id="ni_credit" type="number" value="${defCredit}"></div></div>
+  <div class="field"><label>วิธีระบุยอดงวดนี้ (เลือกอย่างใดอย่างหนึ่ง)</label>
+   <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" id="ni_mode_pct" class="chip-f" onclick="setInstMode('${id}','pct')">กรอกเป็น %</button><button type="button" id="ni_mode_baht" class="chip-f" onclick="setInstMode('${id}','baht')">กรอกเป็นจำนวนเงิน (บาท)</button></div></div>
+  <div id="ni_wrap_pct" class="field"><label>สัดส่วนงวดนี้ (%)</label><input id="ni_pct" type="number" step="any" value="${defPct}" min="0.01" max="100" oninput="instPreview('${id}')"></div>
+  <div id="ni_wrap_baht" class="field" style="display:none"><label>จำนวนเงินงวดนี้ ก่อน VAT (บาท)</label><input id="ni_baht" type="number" step="any" value="${defBaht}" min="0" oninput="instPreview('${id}')"><div class="hint">ใส่ยอดก่อน VAT — ระบบจะบวก VAT ให้เองในใบวางบิล</div></div>
+  <div class="field"><label>วันที่วางบิล</label>${dpick('ni_date',defDate)}</div>
+  <div id="ni_quick_pct" style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 8px"><span style="font-size:12px;color:var(--muted);align-self:center">แบ่งงวดยอดนิยม:</span><button class="btn btn-g btn-sm" onclick="setPct('${id}',30)">30%</button><button class="btn btn-g btn-sm" onclick="setPct('${id}',40)">40%</button><button class="btn btn-g btn-sm" onclick="setPct('${id}',50)">50%</button>${remain>0?`<button class="btn btn-g btn-sm" onclick="setPct('${id}',${remain})">งวดสุดท้าย (${(+remain.toFixed(2))}%)</button>`:''}</div>
+  <div id="ni_quick_baht" style="display:none;gap:6px;flex-wrap:wrap;margin:2px 0 8px"><span style="font-size:12px;color:var(--muted);align-self:center">ทางลัด:</span>${remainBaht>0?`<button class="btn btn-g btn-sm" onclick="setInstBaht('${id}',${remainBaht})">ยอดคงเหลือทั้งหมด (${B(remainBaht)})</button>`:''}<button class="btn btn-g btn-sm" onclick="setInstBaht('${id}',${Math.round(sub*30)/100})">30% (${B(Math.round(sub*30)/100)})</button><button class="btn btn-g btn-sm" onclick="setInstBaht('${id}',${Math.round(sub*50)/100})">50% (${B(Math.round(sub*50)/100)})</button></div>
+  <div class="hint" id="niAmt" style="background:var(--brand-100);border:1px solid #cfe0f8;border-radius:9px;padding:10px 12px;color:var(--brand-d)"></div>
  </div>
- <div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">กลับ</button><button class="btn btn-p" onclick="saveInst('${id}')">${I.check}เพิ่มงวด</button></div>`);}
-function saveInst(id){const j=state.jobs.find(x=>x.id===id);const no=parseInt(document.getElementById('ni_no').value)||((j.installments||[]).reduce((a,i)=>Math.max(a,Number(i.no)||0),0)+1);if((j.installments||[]).some(i=>Number(i.no)===no)){toast('งวดที่ '+no+' มีอยู่แล้ว กรุณาใช้เลขงวดอื่น','err');return;}const pct=Number(document.getElementById('ni_pct').value)||0;const date=parseDMY(document.getElementById('ni_date').value)||todayISO();const credit=parseInt(document.getElementById('ni_credit').value)||0;
- if(pct<=0){toast('กรุณาระบุสัดส่วนงวด (%)','err');return;}
+ <div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">กลับ</button><button class="btn btn-p" onclick="saveInst('${id}')">${I.check}${editing?'บันทึกการแก้ไข':'เพิ่มงวด'}</button></div>`);
+ setInstMode(id,instMode);}
+function saveInst(id){const j=state.jobs.find(x=>x.id===id);
+ const idx=instEditIdx;const editing=(idx!=null&&(j.installments||[])[idx]);
+ const no=parseInt(document.getElementById('ni_no').value)||((j.installments||[]).reduce((a,i)=>Math.max(a,Number(i.no)||0),0)+1);
+ if((j.installments||[]).some((i,k)=>Number(i.no)===no&&!(editing&&k===idx))){toast('งวดที่ '+no+' มีอยู่แล้ว กรุณาใช้เลขงวดอื่น','err');return;}
+ const date=parseDMY(document.getElementById('ni_date').value)||todayISO();
+ const credit=parseInt(document.getElementById('ni_credit').value)||0;
+ const sub=jobSub(j);
+ let obj;
+ if(instMode==='baht'){
+  const amt=Math.round((Number(document.getElementById('ni_baht').value)||0)*100)/100;
+  if(amt<=0){toast('กรุณาระบุจำนวนเงินงวดนี้','err');return;}
+  obj={no,mode:'baht',amt,pct:(sub?Math.round(amt/sub*10000)/100:0),date,creditDays:credit,rc:null};
+ }else{
+  const pct=Number(document.getElementById('ni_pct').value)||0;
+  if(pct<=0){toast('กรุณาระบุสัดส่วนงวด (%)','err');return;}
+  obj={no,mode:'pct',pct,date,creditDays:credit,rc:null};
+ }
+ if(editing)obj.rc=j.installments[idx].rc||null;              /* คงประวัติรับเงินไว้ */
+ const used=(j.installments||[]).reduce((a,i,k)=>a+((editing&&k===idx)?0:instBase(j,i)),0);
+ const over=Math.round((used+instBase(j,obj)-sub)*100)/100;
+ if(over>0.005&&!confirm('ยอดรวมทุกงวดจะเกินมูลค่างานตามสัญญา '+B(over)+' บาท ต้องการบันทึกต่อหรือไม่?'))return;
  if(!j.installments)j.installments=[];
- j.installments.push({no,pct,date,creditDays:credit,rc:null});
+ if(editing)j.installments[idx]=obj;else j.installments.push(obj);
  j.installments.sort((a,b)=>(a.no-b.no)||((a.date<b.date)?-1:1));
- save();closeModal();render();toast('เพิ่มงวดที่ '+no+' แล้ว','ok');setTimeout(()=>openJob(id),50);}
+ instEditIdx=null;
+ save();closeModal();render();toast(editing?('แก้ไขงวดที่ '+no+' แล้ว'):('เพิ่มงวดที่ '+no+' แล้ว'),'ok');setTimeout(()=>openJob(id),50);}
 function delInst(id,idx){const j=state.jobs.find(x=>x.id===id);const it=(j.installments||[])[idx];if(!it)return;
  if(it.rc&&it.rc.issued){toast('งวดนี้ออกใบเสร็จแล้ว ลบไม่ได้','err');return;}
  modal(`<div class="mh"><h3>ลบงวดวางบิล</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการลบงวดที่ <b>${it.no}</b> (${it.pct}%) ของงาน <b>${esc(id)}</b> ใช่หรือไม่?</div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">ยกเลิก</button><button class="btn btn-d" onclick="doDelInst('${id}',${idx})">${I.trash}ลบงวด</button></div>`);}
 function doDelInst(id,idx){const j=state.jobs.find(x=>x.id===id);j.installments.splice(idx,1);save();closeModal();render();toast('ลบงวดแล้ว','ok');setTimeout(()=>openJob(id),50);}
-function payInst(id,idx){const j=state.jobs.find(x=>x.id===id);const it=(j.installments||[])[idx];if(!it)return;const amt=instAmt(j,it.pct);
+function payInst(id,idx){const j=state.jobs.find(x=>x.id===id);const it=(j.installments||[])[idx];if(!it)return;const amt=instTot(j,it);
  modal(`<div class="mh"><h3>รับเงินงวดที่ ${it.no} — ${j.id}</h3><button class="x" onclick="closeModal()">✕</button></div>
  <div class="mb"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:10px;padding:12px 14px;margin-bottom:16px"><span>งวดที่ ${it.no} (${it.pct}%)</span><span style="color:var(--brand-d)">ยอดบิลงวดนี้ <b>${B(amt)}</b></span></div>
   <div class="row2"><div class="field"><label>วันที่รับเงิน</label>${dpick('pi_date',todayISO())}</div><div class="field"><label>วิธีชำระ</label><select id="pi_method"><option>เงินสด</option><option selected>โอนเงิน</option><option>เช็ค</option><option>บัตรเครดิต</option><option>QR พร้อมเพย์</option></select></div></div>
@@ -1442,10 +1593,15 @@ async function importDocPdf(file,pw){window.__pdfFile=file;window.__pdfRetry=imp
 function docHTML(id,type,opt){opt=opt||{};const j=state.jobs.find(x=>x.id===id);const c=compute(j);const s=state.settings,cu=cust(j.customerCode)||{};
  const hasVat=(j.vat!==false);const vrate=hasVat?s.vatRate:0;
  let inst=opt.inst;let instObj=null;
- if(opt.ii!=null&&j.installments&&j.installments[opt.ii]){instObj=j.installments[opt.ii];const prev=j.installments.slice(0,opt.ii).reduce((a,i)=>a+(Number(i.pct)||0),0);inst={no:instObj.no,pct:instObj.pct,prev:Math.round(prev*100)/100};}
+ if(opt.ii!=null&&j.installments&&j.installments[opt.ii]){instObj=j.installments[opt.ii];inst={no:instObj.no,pct:instObj.pct};}
  const pct=inst?(Number(inst.pct)||100):100;const pctL=(+(+pct).toFixed(2));
- const dsub=inst?Math.round(c.sub*pct)/100:c.sub;const dvat=Math.round(dsub*vrate*100)/100;const dtot=Math.round((dsub+dvat)*100)/100;
- const prevPct=inst?(Number(inst.prev)||0):0;const remPct=inst?Math.max(0,Math.round((100-prevPct-pct)*100)/100):0;const remPctL=(+remPct.toFixed(2));
+ /* งวดที่วางบิลไปแล้วจนถึงงวดนี้ (ไล่สะสม เพื่อสรุปใต้มูลค่างานตามสัญญา) */
+ const instList=inst?(j.installments||[]).slice(0,opt.ii+1).map(it=>({no:it.no,base:instBase(j,it),cur:false})):[];
+ if(instList.length)instList[instList.length-1].cur=true;
+ const dsub=inst?instBase(j,instObj):c.sub;
+ const dvat=Math.round(dsub*vrate*100)/100;const dtot=Math.round((dsub+dvat)*100)/100;
+ const instDone=instList.reduce((a,x)=>a+x.base,0);
+ const instLeft=Math.round((c.sub-instDone)*100)/100;
  const _pays=j.payments||[];const lastPay=_pays[_pays.length-1];
  const rcMethod=(instObj&&instObj.rc)?(instObj.rc.method||'-'):(lastPay?.method||'-');
  const rcDate=(instObj&&instObj.rc)?instObj.rc.date:(lastPay?.date||todayISO());
@@ -1455,7 +1611,7 @@ function docHTML(id,type,opt){opt=opt||{};const j=state.jobs.find(x=>x.id===id);
   INV:{th:'ใบแจ้งหนี้ / ใบวางบิล',en:'INVOICE',m:'ครบกำหนดชำระ',mv:invDue,date:invDate,sigL:'ผู้วางบิล / ผู้มีอำนาจลงนาม',sigR:'ผู้รับวางบิล (ลูกค้า)',bank:true},
   RC:{th:hasVat?'ใบเสร็จรับเงิน / ใบกำกับภาษี':'ใบเสร็จรับเงิน',en:hasVat?'RECEIPT / TAX INVOICE':'RECEIPT',m:'วิธีชำระเงิน',mv:rcMethod,date:rcDate,sigL:'ผู้รับเงิน',sigR:'ผู้มีอำนาจลงนาม',receipt:true,bank:true}}[type];
  const docNo=docNumOf(j,type,instObj?instObj.no:null);
- const rows=j.items.map((it,n)=>{const full=(Number(it.qty)||0)*(Number(it.price)||0);const bill=Math.round(full*pct)/100;const rem=Math.round(full*remPct)/100;return inst?`<tr><td class="c">${n+1}</td><td>${esc(it.desc)}</td><td class="c">${B0(it.qty)}</td><td class="c">${esc(it.unit)}</td><td class="n">${B(full)}</td><td class="n" style="font-weight:700;color:#0d4fc4">${B(bill)}</td><td class="n">${B(rem)}</td></tr>`:`<tr><td class="c">${n+1}</td><td>${esc(it.desc)}</td><td class="c">${B0(it.qty)}</td><td class="c">${esc(it.unit)}</td><td class="n">${B(it.price)}</td><td class="n">${B(full)}</td></tr>`;}).join('')+Array.from({length:Math.max(0,(inst?4:8)-j.items.length)}).map(()=>`<tr><td class="c">&nbsp;</td><td></td><td></td><td></td><td></td><td></td>${inst?'<td></td>':''}</tr>`).join('');
+ const rows=j.items.map((it,n)=>{const full=(Number(it.qty)||0)*(Number(it.price)||0);return `<tr><td class="c">${n+1}</td><td>${esc(it.desc)}</td><td class="c">${B0(it.qty)}</td><td class="c">${esc(it.unit)}</td><td class="n">${B(it.price)}</td><td class="n">${B(full)}</td></tr>`;}).join('')+Array.from({length:Math.max(0,(inst?4:8)-j.items.length)}).map(()=>`<tr><td class="c">&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>`).join('');
  const logo=s.logo?`<img src="${s.logo}" style="max-height:50px;max-width:150px;margin-bottom:8px">`:'';
  /* ใบเสร็จของงานที่รับเงินบางส่วน ต้องแสดงยอดที่รับจริง ไม่ใช่ยอดเต็มบิล */
  const rcSrc=(type==='RC')?((instObj&&instObj.rc)?instObj.rc:(!inst?lastPay:null)):null;
@@ -1476,11 +1632,11 @@ function docHTML(id,type,opt){opt=opt||{};const j=state.jobs.find(x=>x.id===id);
   <div class="dh"><div>${logo}<div class="co-n">${esc(s.companyName)}</div><div class="co-i">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)} (${esc(s.branch)})<br>โทร. ${esc(s.phone)}${s.email?' · '+esc(s.email):''}${s.website?' · '+esc(s.website):''}</div></div>
    <div class="badge"><div class="tt">${cfg.th}</div><div class="te">${cfg.en}</div></div></div>
   <div class="parties"><div class="pcard"><div class="pt">ลูกค้า / ผู้ซื้อ (BILL TO)</div><div class="pn">${esc(cu.name||'')}</div><div class="pa">${esc(cu.address||'')}<br>เลขประจำตัวผู้เสียภาษี ${esc(cu.taxId||'-')}${(cu.phone||cu.contact)?'<br>โทร. '+esc(cu.phone||'-')+(cu.contact?' · ผู้ติดต่อ '+esc(cu.contact):''):''}</div></div>
-   <div class="pcard meta"><div class="kv"><span>เลขที่เอกสาร</span><b>${docNo}</b></div><div class="kv"><span>วันที่</span><b>${dTH(cfg.date)}</b></div><div class="kv"><span>${cfg.m}</span><b>${cfg.mv}</b></div>${inst?`<div class="kv"><span>งวดที่</span><b>${inst.no||''} · เบิก ${pctL}%</b></div>`:''}</div></div>
+   <div class="pcard meta"><div class="kv"><span>เลขที่เอกสาร</span><b>${docNo}</b></div><div class="kv"><span>วันที่</span><b>${dTH(cfg.date)}</b></div><div class="kv"><span>${cfg.m}</span><b>${cfg.mv}</b></div>${inst?`<div class="kv"><span>งวดที่</span><b>${inst.no||''}</b></div>`:''}</div></div>
   ${j.project?`<div class="projbar"><span class="pl">โครงการ</span><span class="pv">${esc(j.project)}</span></div>`:''}
-  <table class="it"><thead><tr>${inst?`<th class="c">ลำดับ</th><th>รายละเอียด</th><th class="c">จำนวน</th><th class="c">หน่วย</th><th class="n">จำนวนเงิน</th><th class="n">ยอดเบิก (${pctL}%)</th><th class="n">ยอดคงเหลือ</th>`:`<th class="c">ลำดับ</th><th>รายละเอียด</th><th class="c">จำนวน</th><th class="c">หน่วย</th><th class="n">ราคา/หน่วย</th><th class="n">จำนวนเงิน</th>`}</tr></thead><tbody>${rows}</tbody></table>
+  <table class="it"><thead><tr><th class="c">ลำดับ</th><th>รายละเอียด</th><th class="c">จำนวน</th><th class="c">หน่วย</th><th class="n">ราคา/หน่วย</th><th class="n">จำนวนเงิน</th></tr></thead><tbody>${rows}</tbody></table>
   <div class="btm"><div class="lft"><div class="baht">(ตัวอักษร) ${bahttext(shownTotal)}</div>${bankBlock}${rcNote}${notesHtml}</div>
-   <div class="tot">${inst?`<div class="tr"><span>มูลค่างานตามสัญญา</span><b>${B(c.sub)}</b></div><div class="tr" style="color:#0d4fc4"><span>${type==='RC'?'มูลค่างวดนี้':'วางบิลงวดนี้'} (${pctL}%)</span><b>${B(dsub)}</b></div>`:`<div class="tr"><span>รวมเป็นเงิน</span><b>${B(rcPartial?rcSub:c.sub)}</b></div>`}${hasVat?`<div class="tr"><span>ภาษีมูลค่าเพิ่ม ${(vrate*100).toFixed(0)}%</span><b>${B(rcPartial?rcVat:(inst?dvat:c.vat))}</b></div>`:''}${rcPartial?`<div class="tr"><span>ยอด${inst?'งวดนี้':'ตามใบแจ้งหนี้'}</span><b>${B(rcBilled)}</b></div>`:''}<div class="tr g"><span>${rcPartial?'รับชำระครั้งนี้':'รวมทั้งสิ้น'}</span><span>${B(shownTotal)}</span></div>${rcPartial?`<div class="tr" style="margin-top:4px;color:#7a8598;border-top:1px dashed #dbe4f0;padding-top:6px"><span>คงเหลือค้างชำระ</span><b>${B(Math.max(0,Math.round((rcBilled-rcGross)*100)/100))}</b></div>`:''}</div></div>
+   <div class="tot">${inst?`<div class="tr"><span>มูลค่างานตามสัญญา</span><b>${B(c.sub)}</b></div>`+instList.map(x=>`<div class="tr"${x.cur?' style="color:#0d4fc4"':' style="color:#6b7688"'}><span>${type==='RC'&&x.cur?'รับชำระ':'วางบิล'}งวดที่ ${x.no}${x.cur?' (งวดนี้)':''}</span><b>${B(x.base)}</b></div>`).join('')+`<div class="tr" style="border-top:1px dashed #dbe4f0;padding-top:5px;margin-top:2px"><span>คงเหลือ</span><b>${B(Math.max(0,instLeft))}</b></div>`:`<div class="tr"><span>รวมเป็นเงิน</span><b>${B(rcPartial?rcSub:c.sub)}</b></div>`}${hasVat?`<div class="tr"><span>ภาษีมูลค่าเพิ่ม ${(vrate*100).toFixed(0)}%</span><b>${B(rcPartial?rcVat:(inst?dvat:c.vat))}</b></div>`:''}${rcPartial?`<div class="tr"><span>ยอด${inst?'งวดนี้':'ตามใบแจ้งหนี้'}</span><b>${B(rcBilled)}</b></div>`:''}<div class="tr g"><span>${rcPartial?'รับชำระครั้งนี้':'รวมทั้งสิ้น'}</span><span>${B(shownTotal)}</span></div>${rcPartial?`<div class="tr" style="margin-top:4px;color:#7a8598;border-top:1px dashed #dbe4f0;padding-top:6px"><span>คงเหลือค้างชำระ</span><b>${B(Math.max(0,Math.round((rcBilled-rcGross)*100)/100))}</b></div>`:''}</div></div>
   <div class="sign"><div class="s"><div class="sl"></div>${signName?`<div class="snm">( ${signName} )</div>`:''}${cfg.sigL}${signTitle?`<div style="color:#9aa4b5">${signTitle}</div>`:''}<div style="margin-top:3px;color:#9aa4b5">วันที่ ......./......./.......</div></div><div class="s"><div class="sl"></div>${cfg.sigR}<div style="margin-top:3px;color:#9aa4b5">วันที่ ......./......./.......</div></div></div>
   <div class="foot">ขอบคุณที่ให้ความไว้วางใจใช้บริการ • เอกสารจัดทำโดยระบบบัญชีของ ${esc(s.companyName)}</div>
  </div></div>`;
@@ -1698,8 +1854,8 @@ function exportExcel(){try{const s=state.settings;const wb=XLSX.utils.book_new()
  const wsI=XLSX.utils.aoa_to_sheet(itR);wsI['!cols']=[{wch:20},{wch:7},{wch:40},{wch:9},{wch:10},{wch:14}];XLSX.utils.book_append_sheet(wb,wsI,'รายการ');
  const payR=[['เลขที่งาน','วันที่รับเงิน','วิธีชำระ','จำนวนเงิน','หัก ณ ที่จ่าย','หมายเหตุ']];state.jobs.forEach(j=>(j.payments||[]).forEach(p=>payR.push([j.id,p.date,p.method,p.amount,p.wht,p.note])));
  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(payR),'รับชำระ');
- const inR=[['เลขที่งาน','งวดที่','สัดส่วน(%)','วันที่วางบิล','เครดิต(วัน)','ชำระแล้ว','วันที่รับเงิน','วิธีชำระ','จำนวนรับ','หัก ณ ที่จ่าย','หมายเหตุ']];state.jobs.forEach(j=>(j.installments||[]).forEach(it=>inR.push([j.id,it.no,it.pct,it.date,it.creditDays,(it.rc&&it.rc.issued)?'ใช่':'',it.rc?it.rc.date:'',it.rc?it.rc.method:'',it.rc?it.rc.amount:'',it.rc?it.rc.wht:'',it.rc?it.rc.note:''])));
- const wsIn=XLSX.utils.aoa_to_sheet(inR);wsIn['!cols']=[{wch:20},{wch:7},{wch:10},{wch:12},{wch:10},{wch:9},{wch:12},{wch:12},{wch:12},{wch:12},{wch:18}];XLSX.utils.book_append_sheet(wb,wsIn,'งวดวางบิล');
+ const inR=[['เลขที่งาน','งวดที่','สัดส่วน(%)','ยอดงวด(บาท)','วันที่วางบิล','เครดิต(วัน)','ชำระแล้ว','วันที่รับเงิน','วิธีชำระ','จำนวนรับ','หัก ณ ที่จ่าย','หมายเหตุ']];state.jobs.forEach(j=>(j.installments||[]).forEach(it=>inR.push([j.id,it.no,it.pct,(it.mode==='baht'&&isFinite(Number(it.amt)))?Number(it.amt):'',it.date,it.creditDays,(it.rc&&it.rc.issued)?'ใช่':'',it.rc?it.rc.date:'',it.rc?it.rc.method:'',it.rc?it.rc.amount:'',it.rc?it.rc.wht:'',it.rc?it.rc.note:''])));
+ const wsIn=XLSX.utils.aoa_to_sheet(inR);wsIn['!cols']=[{wch:20},{wch:7},{wch:10},{wch:13},{wch:12},{wch:10},{wch:9},{wch:12},{wch:12},{wch:12},{wch:12},{wch:18}];XLSX.utils.book_append_sheet(wb,wsIn,'งวดวางบิล');
  const exR=[['id','วันที่','ประเภท','หมวด','รายละเอียด','ผู้รับเงิน','ผู้ขอเบิก','จำนวน(ก่อนVAT)','มี VAT','ภาษีซื้อ','อัตราหัก(%)','หัก ณ ที่จ่าย','ผู้รับเงิน(id)','ชำระแล้ว','หมายเหตุ','รายการย่อย(JSON)']];state.expenses.forEach(e=>exR.push([e.id,e.date,expKindLabel(expKind(e)),e.category,e.desc,e.payee||'',e.reqBy||'',e.amount,((e.hasVat!=null?e.hasVat:(Number(e.vat)||0)>0))?'ใช่':'',e.vat,Math.round((Number(e.whtRate)||0)*10000)/100,Number(e.wht)||0,e.payeeId||'',e.paid?'ใช่':'',e.note,(e.items&&e.items.length)?JSON.stringify(e.items):'']));
  const wsE=XLSX.utils.aoa_to_sheet(exR);wsE['!cols']=[{wch:14},{wch:12},{wch:10},{wch:18},{wch:28},{wch:16},{wch:16},{wch:13},{wch:8},{wch:11},{wch:11},{wch:13},{wch:14},{wch:9},{wch:18},{wch:30}];XLSX.utils.book_append_sheet(wb,wsE,'รายจ่าย');
  const issL={withhold:'หัก ณ ที่จ่าย',forever:'ออกให้ตลอดไป',once:'ออกให้ครั้งเดียว',other:'อื่นๆ'};
@@ -1716,7 +1872,8 @@ function importExcel(file){const r=new FileReader();r.onload=e=>{try{const wb=XL
  sh('ลูกค้า').forEach(row=>{const code=String(row['รหัสลูกค้า']||'').trim();if(!code)return;const o={code,name:String(row['ชื่อลูกค้า']||''),address:String(row['ที่อยู่']||''),taxId:String(row['เลขผู้เสียภาษี']||''),contact:String(row['ผู้ติดต่อ']||''),phone:String(row['โทรศัพท์']||''),email:String(row['อีเมล']||'')};const i=state.customers.findIndex(c=>c.code===code);if(i>=0)state.customers[i]=o;else{state.customers.push(o);ac++;}});
  const itBy={};sh('รายการ').forEach(row=>{const jid=String(row['เลขที่งาน']||'').trim();if(!jid)return;(itBy[jid]=itBy[jid]||[]).push({desc:String(row['รายละเอียด']||''),qty:Number(row['จำนวน'])||0,unit:String(row['หน่วย']||''),price:Number(row['ราคาต่อหน่วย'])||0});});
  const pBy={};sh('รับชำระ').forEach(row=>{const jid=String(row['เลขที่งาน']||'').trim();if(!jid)return;(pBy[jid]=pBy[jid]||[]).push({date:xdate(row['วันที่รับเงิน']),method:String(row['วิธีชำระ']||''),amount:Number(row['จำนวนเงิน'])||0,wht:Number(row['หัก ณ ที่จ่าย'])||0,note:String(row['หมายเหตุ']||'')});});
- const inBy={};sh('งวดวางบิล').forEach(row=>{const jid=String(row['เลขที่งาน']||'').trim();if(!jid)return;const paid=String(row['ชำระแล้ว']||'').trim();const it={no:Number(row['งวดที่'])||((inBy[jid]||[]).length+1),pct:Number(row['สัดส่วน(%)'])||0,date:xdate(row['วันที่วางบิล']),creditDays:Number(row['เครดิต(วัน)'])||state.settings.creditDays,rc:paid?{issued:true,date:xdate(row['วันที่รับเงิน']),method:String(row['วิธีชำระ']||''),amount:Number(row['จำนวนรับ'])||0,wht:Number(row['หัก ณ ที่จ่าย'])||0,note:String(row['หมายเหตุ']||'')}:null};(inBy[jid]=inBy[jid]||[]).push(it);});
+ const inBy={};sh('งวดวางบิล').forEach(row=>{const jid=String(row['เลขที่งาน']||'').trim();if(!jid)return;const paid=String(row['ชำระแล้ว']||'').trim();const _bt=String(row['ยอดงวด(บาท)']==null?'':row['ยอดงวด(บาท)']).replace(/[,\s]/g,'');const _hasBt=_bt!==''&&isFinite(parseFloat(_bt));
+   const it={no:Number(row['งวดที่'])||((inBy[jid]||[]).length+1),pct:Number(row['สัดส่วน(%)'])||0,mode:_hasBt?'baht':'pct',amt:_hasBt?Math.round(parseFloat(_bt)*100)/100:undefined,date:xdate(row['วันที่วางบิล']),creditDays:Number(row['เครดิต(วัน)'])||state.settings.creditDays,rc:paid?{issued:true,date:xdate(row['วันที่รับเงิน']),method:String(row['วิธีชำระ']||''),amount:Number(row['จำนวนรับ'])||0,wht:Number(row['หัก ณ ที่จ่าย'])||0,note:String(row['หมายเหตุ']||'')}:null};(inBy[jid]=inBy[jid]||[]).push(it);});
  Object.keys(inBy).forEach(k=>inBy[k].sort((a,b)=>(a.no-b.no)||((a.date<b.date)?-1:1)));
  sh('เอกสาร').forEach(row=>{const id=String(row['เลขที่งาน']||'').trim();if(!id)return;const invYes=String(row['ออกใบแจ้งหนี้']||'').trim();const inv=invYes?{issued:true,date:xdate(row['วันที่ใบแจ้งหนี้'])||xdate(row['วันที่'])||todayISO(),creditDays:Number(row['เครดิต(วัน)'])||state.settings.creditDays}:null;const ex=state.jobs.find(j=>j.id===id);const o={id,customerCode:String(row['รหัสลูกค้า']||'').trim(),project:String(row['โครงการ']||(ex&&ex.project)||''),terms:String(row['เงื่อนไข']||(ex&&ex.terms)||''),qtDate:xdate(row['วันที่']),status:String(row['สถานะ']||'ร่าง'),note:String(row['หมายเหตุ']||''),items:itBy[id]||(ex&&ex.items)||[],inv:inv||(ex?ex.inv:null),payments:pBy[id]||(ex&&ex.payments)||[],installments:inBy[id]||(ex&&ex.installments)||[],vat:(('มี VAT' in row)?String(row['มี VAT']||'').trim()!=='':(ex?ex.vat:undefined)),rcIssued:String(row['ออกใบเสร็จ']||'').trim()?true:(ex?!!ex.rcIssued:false)};
   if(o.vat===undefined)delete o.vat;
