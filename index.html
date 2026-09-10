@@ -190,7 +190,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--
 .doc .pcard{flex:1;background:#f7f9fc;border:1px solid #e8edf5;border-radius:11px;padding:12px 14px}
 .doc .pcard.meta{flex:0 0 42%;background:#fff}
 .doc .pt{font-size:9.5px;color:#98a3b5;font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px}
-.doc .pn{font-weight:700;font-size:13.5px;color:#1a2233}
+.doc .pn{font-weight:700;font-size:11.5px;color:#1a2233;line-height:1.45}
 .doc .pa{font-size:10.5px;color:#5a6577;line-height:1.55;margin-top:3px}
 .doc .proj-in{margin-top:7px;padding-top:6px;border-top:1px dashed #d7e0ee;font-size:11px;color:#7a8598}
 .doc .proj-in b{color:var(--brand-d);font-size:12.5px;font-family:'Prompt',var(--sans)}
@@ -407,8 +407,12 @@ function migrate(d){if(!d||typeof d!=='object')return null;
  if(!d.settings.docStyle)d.settings.docStyle='color';
  d.jobs=d.jobs.filter(j=>j&&j.id);d.jobs.forEach(j=>{if(!Array.isArray(j.items))j.items=[];if(!Array.isArray(j.payments))j.payments=[];if(j.installments&&!Array.isArray(j.installments))j.installments=[];});
  return d;}
-function load(){try{const r=localStorage.getItem(LS);if(r)return migrate(JSON.parse(r));}catch(e){}return null;}
-let persistBroken=false, pullingCloud=false, hasUserEdits=false;
+let loadCorrupt=false;
+function load(){let r=null;try{r=localStorage.getItem(LS);}catch(e){return null;}
+ if(r==null||r==='')return null;                     /* ไม่เคยมีข้อมูล = เครื่องใหม่จริง */
+ try{const d=migrate(JSON.parse(r));if(d&&d.settings)return d;}catch(e){}
+ loadCorrupt=true;return null;}                      /* มีข้อมูลแต่อ่านไม่ออก = ห้ามใช้ข้อมูลตัวอย่างแทน */
+let persistBroken=false, pullingCloud=false, hasUserEdits=false, pendingPush=false;
 function save(opt){opt=opt||{};
  const prev=localStorage.getItem(SAVEDAT);
  try{
@@ -442,7 +446,15 @@ function sbReady(){return !!(sb&&cloudCfg().code);}
 async function cloudLoad(){if(!sbReady())return{ok:false,data:null};try{const{data,error}=await sb.rpc('vault_load',{p_code:cloudCfg().code});if(error)throw error;return{ok:true,data:data||null};}catch(e){sbState='err';updateSbBadge();return{ok:false,data:null};}}
 async function cloudSave(){if(!sbReady())return false;if(pullingCloud)return false;sbState='syncing';updateSbBadge();try{const payload={savedAt:localSavedAt()||Date.now(),state:state};const{error}=await sb.rpc('vault_save',{p_code:cloudCfg().code,p_data:payload});if(error)throw error;sbState='ok';updateSbBadge();return true;}catch(e){sbState='err';updateSbBadge();return false;}}
 let cloudT=null;
-function cloudQueue(){if(!sbReady()||persistBroken||pullingCloud||mustPullFirst)return;clearTimeout(cloudT);cloudT=setTimeout(()=>{cloudSave();},1500);}
+let cloudRetry=0;
+function cloudQueue(d){if(!sbReady()||persistBroken||mustPullFirst)return;
+ if(pullingCloud){pendingPush=true;return;}          /* กำลังดึงอยู่ = จำไว้ก่อน แล้วค่อยส่งหลังดึงเสร็จ */
+ clearTimeout(cloudT);cloudT=setTimeout(async()=>{
+  const ok=await cloudSave();
+  if(ok){cloudRetry=0;}
+  else if(cloudRetry<5){cloudRetry++;cloudQueue(Math.min(60000,5000*Math.pow(2,cloudRetry-1)));}  /* ส่งไม่ผ่าน = ลองใหม่ ไม่ปล่อยค้างในเครื่อง */
+ },d||1500);}
+try{window.addEventListener('online',()=>{if(sbReady()){cloudRetry=0;cloudQueue(800);}});}catch(e){}
 /* รับข้อมูลจากคลาวด์อย่างปลอดภัย: ตรวจสอบ+เรนเดอร์ก่อน แล้วค่อยเขียนทับเครื่อง */
 function adoptCloud(st,savedAt,msg){const nx=migrate(st);if(!nx||typeof nx!=='object'||!nx.settings){toast('ข้อมูลจากคลาวด์ไม่สมบูรณ์ ไม่ได้นำมาใช้','err');return false;}
  const bk=state;state=nx;
@@ -458,8 +470,10 @@ async function cloudSyncStart(){if(!sbReady()){updateSbBadge();return;}
   const code=cloudCfg().code;
   const firstTime=(localStorage.getItem(SYNCED)!==code);   /* ครั้งแรกของรหัสนี้บนเครื่องนี้ = ดึงอย่างเดียว ห้ามดันทับ */
   if(cloud&&cloud.state){const cS=+(cloud.savedAt||0),lS=localSavedAt();
+   if(firstTime&&lS>0&&hasUserEdits&&!mustPullFirst){       /* เครื่องนี้มีข้อมูลของตัวเอง + คลาวด์ก็มี = ต้องให้ผู้ใช้เลือก */
+     askCloudChoice(cloud.state,cS,lS);sbState='ok';updateSbBadge();return;}
    if(cS>lS||firstTime)adoptCloud(cloud.state,cS,'ดึงข้อมูลล่าสุดจากคลาวด์แล้ว');
-   else if(lS>cS&&hasUserEdits&&!mustPullFirst){pullingCloud=false;cloudSave();}
+   else if(lS>cS&&hasUserEdits&&!mustPullFirst){mustPullFirst=false;pullingCloud=false;cloudSave();}
    try{localStorage.setItem(SYNCED,code);}catch(e){}
    mustPullFirst=false;sbState='ok';updateSbBadge();
   }else{                                                              /* คลาวด์ว่างจริง */
@@ -467,7 +481,28 @@ async function cloudSyncStart(){if(!sbReady()){updateSbBadge();return;}
    if(localSavedAt()&&hasUserEdits&&!mustPullFirst){mustPullFirst=false;pullingCloud=false;cloudSave();}
    else{mustPullFirst=false;sbState='ok';updateSbBadge();}
   }
- }finally{pullingCloud=false;}}
+ }finally{pullingCloud=false;if(pendingPush){pendingPush=false;cloudQueue(300);}}}
+/* ให้ผู้ใช้เลือกเองว่าจะเอาชุดไหน แทนที่จะทับทิ้งเงียบ ๆ */
+let _cloudPick=null;
+function cnt(st){st=st||{};return (st.jobs||[]).length+' งาน · '+(st.customers||[]).length+' ลูกค้า · '+(st.expenses||[]).length+' รายจ่าย';}
+function askCloudChoice(cst,cS,lS){_cloudPick={st:cst,at:cS};
+ const dt=t=>{try{return new Date(+t).toLocaleString('th-TH');}catch(e){return '-';}};
+ modal(`<div class="mh"><h3>พบข้อมูลทั้งบนคลาวด์และในเครื่องนี้</h3><button class="x" onclick="closeModal()">✕</button></div>
+ <div class="mb"><div style="background:#fff8e6;border:1px solid #ffe1a6;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.7;color:#8a6100">
+ เครื่องนี้เพิ่งเชื่อมรหัสลับนี้เป็นครั้งแรก และมีข้อมูลอยู่แล้วทั้งสองฝั่ง<br><b>กรุณาเลือกว่าจะใช้ชุดไหน</b> — อีกชุดจะถูกทับ แนะนำให้กด Export .json เก็บไว้ก่อน</div>
+ <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
+  <div class="card" style="padding:14px"><div class="sec-t">☁️ ข้อมูลบนคลาวด์</div><div style="font-size:13px;line-height:1.8">${esc(cnt(cst))}<br><span style="color:var(--muted)">บันทึกล่าสุด ${esc(dt(cS))}</span></div></div>
+  <div class="card" style="padding:14px"><div class="sec-t">💻 ข้อมูลในเครื่องนี้</div><div style="font-size:13px;line-height:1.8">${esc(cnt(state))}<br><span style="color:var(--muted)">บันทึกล่าสุด ${esc(dt(lS))}</span></div></div>
+ </div></div>
+ <div class="mf" style="flex-wrap:wrap;gap:8px"><button class="btn btn-g" onclick="exportData()">${I.down}Export .json ก่อน</button>
+ <button class="btn btn-p" onclick="useCloudData()">${I.down}ใช้ข้อมูลบนคลาวด์</button>
+ <button class="btn btn-g" onclick="useLocalData()">${I.up}ใช้ข้อมูลในเครื่องนี้</button></div>`);}
+function useCloudData(){if(!_cloudPick)return;const p=_cloudPick;_cloudPick=null;
+ if(adoptCloud(p.st,p.at,'ใช้ข้อมูลจากคลาวด์แล้ว')){try{localStorage.setItem(SYNCED,cloudCfg().code);}catch(e){}}
+ closeModal();}
+function useLocalData(){_cloudPick=null;try{localStorage.setItem(SYNCED,cloudCfg().code);}catch(e){}
+ mustPullFirst=false;closeModal();localStorage.setItem(SAVEDAT,String(Date.now()));cloudQueue(300);
+ toast('ใช้ข้อมูลในเครื่องนี้ และกำลังส่งขึ้นคลาวด์','ok');}
 function updateSbBadge(){const el=document.getElementById('sbBadge');if(!el)return;const c=cloudCfg();if(!(c.url&&c.key)){el.style.display='none';return;}el.style.display='';if(!c.code){el.innerHTML='<span style="color:#c98a00">☁ ตั้งรหัสลับเพื่อซิงค์</span>';return;}const m={off:['#8a94a6','☁ พร้อม'],ok:['#0f8a3c','☁ ซิงค์แล้ว'],syncing:['#c98a00','☁ กำลังซิงค์…'],err:['#c0392b','☁ ผิดพลาด']};const v=m[sbState]||m.off;el.innerHTML=`<span style="color:${v[0]}">${v[1]}</span>`;}
 function gotoCloud(){go('settings');setTimeout(()=>{const e=document.getElementById('cloudCard');if(e)e.scrollIntoView({behavior:'smooth',block:'center'});},80);}
 
@@ -476,7 +511,7 @@ const GSCFG='acct_gs_cfg_v1';
 function gsCfg(){try{return JSON.parse(localStorage.getItem(GSCFG))||{};}catch(e){return{};}}
 function gsCfgSave(c){localStorage.setItem(GSCFG,JSON.stringify(c||{}));}
 let gsT=null;
-function gsQueue(){const c=gsCfg();if(!c.url||!c.auto)return;clearTimeout(gsT);gsT=setTimeout(()=>{gsBackup(true);},9000);}
+function gsQueue(){if(persistBroken||pullingCloud||mustPullFirst)return;const c=gsCfg();if(!c.url||!c.auto)return;clearTimeout(gsT);gsT=setTimeout(()=>{gsBackup(true);},9000);}
 async function gsBackup(silent){const c=gsCfg();if(!c.url){if(!silent)toast('ยังไม่ได้ตั้งค่าลิงก์ Google Sheet','err');return false;}try{const body=JSON.stringify({action:'backup',savedAt:localSavedAt()||Date.now(),data:state});await fetch(c.url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body});gsCfgSave({...c,last:Date.now()});if(!silent)toast('สำรองขึ้น Google Sheet แล้ว','ok');return true;}catch(e){if(!silent)toast('สำรองขึ้น Google Sheet ไม่สำเร็จ','err');return false;}}
 function gsRestore(){const c=gsCfg();if(!c.url){toast('ยังไม่ได้ตั้งค่าลิงก์ Google Sheet','err');return;}if(!confirm('กู้คืนข้อมูลจาก Google Sheet? ข้อมูลปัจจุบันในเครื่องนี้จะถูกแทนที่ด้วยชุดสำรองล่าสุด'))return;const cb='gsCB_'+Date.now();const s=document.createElement('script');let done=false;const cleanup=()=>{done=true;try{delete window[cb];}catch(e){window[cb]=undefined;}s.remove();};window[cb]=(resp)=>{if(done)return;try{if(resp&&resp.data){if(adoptCloud(resp.data,resp.savedAt,'กู้คืนข้อมูลจาก Google Sheet แล้ว'))cloudQueue();}else toast('ยังไม่พบข้อมูลสำรองใน Google Sheet','err');}catch(e){toast('กู้คืนไม่สำเร็จ','err');}cleanup();};s.onerror=()=>{if(!done){toast('เชื่อมต่อ Google Sheet ไม่สำเร็จ','err');cleanup();}};s.src=c.url+(c.url.includes('?')?'&':'?')+'action=restore&callback='+cb+'&_='+Date.now();document.body.appendChild(s);setTimeout(()=>{if(!done){toast('หมดเวลาเชื่อมต่อ Google Sheet','err');cleanup();}},15000);}
 
@@ -834,7 +869,7 @@ function saveExp(id){const g=k=>{const el=document.getElementById('e_'+k);return
   const pidEl=document.getElementById('e_payeeid');const payeeId=(hasWht&&pidEl)?pidEl.value:'';
   obj={date,kind,category:g('category'),desc,payee:g('payee').trim(),amount:amt,hasVat,vat,whtRate:rate,wht,whtMode:wMode,whtBaht,payeeId,note:g('note').trim()};}
  obj.paid=id?!!((state.expenses.find(x=>x.id===id)||{}).paid):false;
- if(id){const i=state.expenses.findIndex(x=>x.id===id);obj.id=id;state.expenses[i]=obj;}else{obj.id='E'+Date.now();state.expenses.push(obj);}
+ if(id){const i=state.expenses.findIndex(x=>x.id===id);if(i<0){toast('ไม่พบรายการนี้แล้ว (อาจถูกลบ หรือซิงค์จากเครื่องอื่น) — ยังไม่ได้บันทึก','err');return;}obj.id=id;state.expenses[i]=obj;}else{obj.id=uid('E');state.expenses.push(obj);}
  save();closeModal();render();toast('บันทึกรายจ่ายแล้ว','ok');}
 let pendDel=null;
 function confirmDel(title,detail){modal(`<div class="mh"><h3>${title}</h3><button class="x" onclick="closeModal()">✕</button></div>`+
@@ -856,7 +891,7 @@ function inMonth(iso,mk){return mk==='all'||(iso&&iso.slice(0,7)===mk);}
 function setVatMonth(m){vatMonth=m;vatSel.clear();viewVat();}
 function setWht(v){state.settings.whtRate=(parseFloat(v)||0)/100;save();viewVat();}
 function rcTaxEvents(){const out=[];state.jobs.forEach(j=>{const vatable=(j.vat!==false);const rate=vatable?state.settings.vatRate:0;const insts=j.installments||[];
-  if(insts.length){insts.forEach((i,ii)=>{if(i.rc&&i.rc.issued){const base=instBase(j,i);out.push({date:i.rc.date,jobId:j.id,key:j.id+'#i'+ii,vatable:vatable,cust:cust(j.customerCode)?.name||'',base:base,vat:Math.round(base*rate*100)/100,docNo:docNumOf(j,'RC',i.no),note:'งวดที่ '+i.no});}});}
+  if(insts.length){insts.forEach((i,ii)=>{if(i.rc&&i.rc.issued){const billed=instBase(j,i);const gross=Math.round((((Number(i.rc.amount)||0)+(Number(i.rc.wht)||0)))*100)/100;const base=gross>0?Math.round(gross/(1+rate)*100)/100:billed;out.push({date:i.rc.date,jobId:j.id,key:j.id+'#i'+ii,vatable:vatable,cust:cust(j.customerCode)?.name||'',base:base,vat:Math.round((gross>0?(gross-base):base*rate)*100)/100,docNo:docNumOf(j,'RC',i.no),note:'งวดที่ '+i.no});}});}
   else if(j.rcIssued){const c=compute(j);const pays=(j.payments||[]);
    if(!pays.length){out.push({date:billDate(j),jobId:j.id,key:j.id+'#full',vatable:vatable,cust:cust(j.customerCode)?.name||'',base:c.sub,vat:c.vat,docNo:docNumOf(j,'RC'),note:''});}
    else{const multi=pays.length>1;
@@ -875,7 +910,7 @@ function viewVat(){
  const inExp=Math.round(state.expenses.filter(e=>inMonth(e.date,vatMonth)).reduce((s,e)=>s+(Number(e.vat)||0),0)*100)/100;
  const inLedger=Math.round((state.inputVat||[]).filter(e=>inMonth(e.date,vatMonth)).reduce((s,e)=>s+(Number(e.vat)||0),0)*100)/100;
  const inVat=Math.round((inExp+inLedger)*100)/100;const net=Math.round((outVat-inVat)*100)/100;
- let expTotal=0;rcE.forEach(e=>{e._w=e.vatable?Math.round(e.base*wht*100)/100:0;e._exp=Math.round((e.base+e.vat-e._w)*100)/100;expTotal+=e._exp;});expTotal=Math.round(expTotal*100)/100;
+ let expTotal=0;rcE.forEach(e=>{e._w=Math.round(e.base*wht*100)/100;e._exp=Math.round((e.base+e.vat-e._w)*100)/100;expTotal+=e._exp;});expTotal=Math.round(expTotal*100)/100;
  vatVis=rcE.map(e=>e.key);
  let stmtIn=0;state.statements.forEach(t=>{if(inMonth(t.date,vatMonth))stmtIn+=Number(t.moneyIn)||0;});const diff=Math.round((expTotal-stmtIn)*100)/100;
  const kpi=(bg,ink,ic,lab,val,meta)=>`<div class="card stat"><div class="lab"><span class="chip" style="background:${bg};color:${ink}">${ic}</span>${lab}</div><div class="val">${val}</div><div class="meta">${meta||''}</div></div>`;
@@ -912,7 +947,7 @@ function viewVat(){
   html+=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><span style="font-size:12.5px;color:var(--ink-2)">เลือกแล้ว <b>${selN}</b>/${rcE.length} รายการ</span><button class="btn btn-p btn-sm" ${selN?'':'disabled style="opacity:.45;cursor:not-allowed"'} onclick="exportVatSel()">${I.money} Export ที่เลือก${selN?' ('+selN+')':''}</button>${selN?`<button class="btn btn-g btn-sm" onclick="vatSelAll(false)">ล้างที่เลือก</button>`:''}</div>`;
   html+=`<div class="card tbl-wrap"><table class="tbl"><thead><tr><th style="width:34px"><input type="checkbox" ${allSel?'checked':''} onclick="vatSelAll(this.checked)"></th><th>เลขที่ใบเสร็จ</th><th>ลูกค้า</th><th>วันที่รับ</th><th class="num">ก่อน VAT</th><th class="num">VAT ${(rate*100).toFixed(0)}%</th><th class="num">หัก ${whtPct}%</th><th class="num">ต้องได้รับโอน</th><th>ตรวจกับ Statement</th></tr></thead><tbody>`;
   rcE.forEach(e=>{let mc;if(e._m&&e._m.exact)mc=`<span class="pill good"><span class="dot"></span>ตรง</span> <span style="font-size:11px;color:var(--muted)">${dTH(e._m.s.date)} · ${B(e._m.s.amount)}</span>`;else if(e._m)mc=`<span class="pill warn"><span class="dot"></span>ใกล้เคียง</span> <span style="font-size:11px;color:#b7791f">${dTH(e._m.s.date)} · ${B(e._m.s.amount)} (ต่าง ${B(Math.abs(e._m.diff))})</span>`;else mc=`<span class="pill crit"><span class="dot"></span>ไม่พบใน Statement</span>`;const dash='<span style="color:var(--muted)">-</span>';
-   html+=`<tr><td><input type="checkbox" ${vatSel.has(e.key)?'checked':''} onclick="toggleVatSel('${e.key}',this.checked)"></td><td class="jobid">${e.docNo}</td><td>${esc(e.cust)}${e.note?' <span style="color:var(--muted);font-size:11px">('+esc(e.note)+')</span>':''}${e.vatable?'':' <span class="pill" style="background:#eef0f3;color:#5a6472;font-size:10px">ไม่มี VAT</span>'}</td><td class="mono">${dTH(e.date)}</td><td class="num">${B(e.base)}</td><td class="num" style="color:var(--good-ink)">${e.vatable?B(e.vat):dash}</td><td class="num" style="color:var(--crit)">${e.vatable?B(e._w):dash}</td><td class="num" style="font-weight:700">${B(e._exp)}</td><td>${mc}</td></tr>`;});
+   html+=`<tr><td><input type="checkbox" ${vatSel.has(e.key)?'checked':''} onclick="toggleVatSel('${e.key}',this.checked)"></td><td class="jobid">${e.docNo}</td><td>${esc(e.cust)}${e.note?' <span style="color:var(--muted);font-size:11px">('+esc(e.note)+')</span>':''}${e.vatable?'':' <span class="pill" style="background:#eef0f3;color:#5a6472;font-size:10px">ไม่มี VAT</span>'}</td><td class="mono">${dTH(e.date)}</td><td class="num">${B(e.base)}</td><td class="num" style="color:var(--good-ink)">${e.vatable?B(e.vat):dash}</td><td class="num" style="color:var(--crit)">${B(e._w)}</td><td class="num" style="font-weight:700">${B(e._exp)}</td><td>${mc}</td></tr>`;});
   html+=`<tr style="background:var(--surface-2);font-weight:700"><td></td><td colspan="6">รวมยอดที่ต้องได้รับโอน</td><td class="num" style="color:var(--brand-d)">${B(expTotal)}</td><td>จับคู่ ${matchedN}/${rcE.length}</td></tr></tbody></table></div>`;
   const okAll=(matchedN===rcE.length&&unmatchedStmt.length===0);
   html+=`<div class="card" style="padding:14px 18px;margin-top:12px;background:${okAll?'#e9f7ee':'#fdf3d9'};border-color:${okAll?'#bfe6cd':'#f2e2b3'}"><div style="font-size:13px;color:var(--ink-2)"><span style="color:${okAll?'var(--good-ink)':'#b7791f'}">${I.check}</span> สรุปการจับคู่: ใบเสร็จจับคู่กับ Statement ได้ <b>${matchedN}/${rcE.length}</b> ใบ · ต้องได้รับโอนรวม <b>${B(expTotal)}</b> · เงินเข้าจริงใน Statement <b>${B(stmtIn)}</b>${okAll?' — <b style="color:var(--good-ink)">ตรงกันทุกรายการ ✓</b>':''}</div>${unmatchedStmt.length?`<div style="font-size:12px;color:#b7791f;margin-top:6px">• เงินเข้าใน Statement ที่ยังจับคู่ไม่ได้ (${unmatchedStmt.length}): ${unmatchedStmt.map(s=>dTH(s.date)+' '+B(s.amount)+(s.desc?' ('+esc(s.desc)+')':'')).join(' · ')}</div>`:''}${rcE.some(e=>!e._m)?`<div style="font-size:12px;color:var(--crit);margin-top:4px">• มีใบเสร็จที่ยังไม่พบเงินเข้าใน Statement — ตรวจสอบว่าลูกค้าโอนจริงหรือยัง</div>`:''}</div>`;
@@ -928,7 +963,7 @@ function openInputVat(id){const e=id?(state.inputVat||[]).find(x=>x.id===id):{id
   <div class="hint">ใส่มูลค่าก่อน VAT ระบบจะคำนวณ VAT ให้อัตโนมัติ (แก้เองได้)</div>
  </div>
  <div class="mf"><button class="btn btn-g" onclick="closeModal()">ยกเลิก</button><button class="btn btn-p" onclick="saveInputVat('${id||''}')">${I.check}บันทึก</button></div>`);}
-function saveInputVat(id){const g=k=>document.getElementById('iv_'+k).value;const date=parseDMY(g('date')),desc=g('desc').trim();if(!date||!desc){toast('กรุณากรอกวันที่และรายละเอียด','err');return;}const o={date,seller:g('seller').trim(),desc,base:Number(g('base'))||0,vat:Number(g('vat'))||0};state.inputVat=state.inputVat||[];if(id){const i=state.inputVat.findIndex(x=>x.id===id);o.id=id;state.inputVat[i]=o;}else{o.id='IV'+Date.now();state.inputVat.push(o);}save();closeModal();render();toast('บันทึกภาษีซื้อแล้ว','ok');}
+function saveInputVat(id){const g=k=>document.getElementById('iv_'+k).value;const date=parseDMY(g('date')),desc=g('desc').trim();if(!date||!desc){toast('กรุณากรอกวันที่และรายละเอียด','err');return;}const o={date,seller:g('seller').trim(),desc,base:Number(g('base'))||0,vat:Number(g('vat'))||0};state.inputVat=state.inputVat||[];if(id){const i=state.inputVat.findIndex(x=>x.id===id);if(i<0){toast('ไม่พบรายการนี้แล้ว (อาจถูกลบ หรือซิงค์จากเครื่องอื่น) — ยังไม่ได้บันทึก','err');return;}o.id=id;state.inputVat[i]=o;}else{o.id=uid('IV');state.inputVat.push(o);}save();closeModal();render();toast('บันทึกภาษีซื้อแล้ว','ok');}
 function delInputVat(id){const e=(state.inputVat||[]).find(x=>x.id===id);if(!e)return;pendDel={t:'iv',id:id};confirmDel('ลบภาษีซื้อ',`${dTH(e.date)} · ${esc(e.vendor||e.desc||'')}<br>ฐาน ${B(e.base)} · VAT <b>${B(e.vat)}</b>`);}
 function exportVatExcel(){try{const wb=XLSX.utils.book_new();const wht=Number(state.settings.whtRate)||0;const rcE=rcTaxEvents().sort((a,b)=>a.date<b.date?1:-1);
  const mset={};rcE.forEach(e=>{const k=(e.date||'').slice(0,7);if(k){mset[k]=mset[k]||{out:0,inx:0};mset[k].out+=e.vat;}});
@@ -1019,7 +1054,7 @@ function exportSelDocLayout(){
    r=push([s.companyName||'']);full(r);
    r=push([((s.addr1||'')+' '+(s.addr2||'')).trim()]);full(r);
    r=push(['เลขประจำตัวผู้เสียภาษี '+(s.taxId||'')+' ('+(s.branch||'')+')']);full(r);
-   r=push(['โทร. '+(s.phone||'')+(s.email?' · '+s.email:'')]);full(r);
+   r=push(['โทร. '+(s.phone||'')+(s.email?'   '+s.email:'')]);full(r);
    push([]);
    r=push(['ประเภทเอกสาร:  '+cfg.th+' ('+cfg.en+')','','','','เลขที่เอกสาร',docNo]);M.push({s:{r:r,c:0},e:{r:r,c:3}});
    push(['','','','','วันที่',dTH(cfg.date)]);
@@ -1368,7 +1403,7 @@ function openJob(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);co
    const act=paid
     ?`<button class="btn btn-g btn-ic btn-sm" title="แก้ไขงวดนี้ (ยอด/วันที่/เครดิต)" onclick="editInst('${j.id}',${idx})">${I.edit}</button> <button class="btn btn-g btn-ic btn-sm" title="พิมพ์ใบวางบิล" onclick="printDoc('${j.id}','INV',{ii:${idx}})">${I.print}</button> <button class="btn btn-p btn-ic btn-sm" title="พิมพ์ใบเสร็จ/ใบกำกับภาษี" onclick="printDoc('${j.id}','RC',{ii:${idx}})">${I.doc}</button> <button class="btn btn-g btn-ic btn-sm" title="ยกเลิกรับเงินงวดนี้ (กดผิด)" onclick="unpayInst('${j.id}',${idx})">↩</button>`
     :`<button class="btn btn-g btn-ic btn-sm" title="แก้ไขงวดนี้ (ยอด/วันที่/เครดิต)" onclick="editInst('${j.id}',${idx})">${I.edit}</button> <button class="btn btn-g btn-ic btn-sm" title="พิมพ์ใบวางบิล" onclick="printDoc('${j.id}','INV',{ii:${idx}})">${I.print}</button> <button class="btn btn-p btn-sm" title="รับเงินและออกใบเสร็จ" onclick="payInst('${j.id}',${idx})">${I.cash}รับเงิน</button> <button class="btn btn-d btn-ic btn-sm" title="ลบงวดนี้" onclick="delInst('${j.id}',${idx})">${I.trash}</button>`;
-   return `<tr><td class="c" style="font-weight:700">${it.no}</td><td class="c">${it.pct}%</td><td class="num" style="font-weight:600">${B(amt)}</td><td class="mono">${dTH(it.date)}${paid?`<div style="font-size:11px;color:var(--good-ink);margin-top:2px">รับเงิน ${dTH(it.rc.date)}</div>`:`<div style="font-size:11px;color:var(--muted);margin-top:2px">ครบกำหนด ${dTH(dueD)}</div>`}</td><td>${st}</td><td style="text-align:right;white-space:nowrap">${act}</td></tr>`;
+   return `<tr><td class="c" style="font-weight:700">${it.no}</td><td class="c">${instPctOf(j,it)}%</td><td class="num" style="font-weight:600">${B(amt)}</td><td class="mono">${dTH(it.date)}${paid?`<div style="font-size:11px;color:var(--good-ink);margin-top:2px">รับเงิน ${dTH(it.rc.date)}</div>`:`<div style="font-size:11px;color:var(--muted);margin-top:2px">ครบกำหนด ${dTH(dueD)}</div>`}</td><td>${st}</td><td style="text-align:right;white-space:nowrap">${act}</td></tr>`;
   }).join('');
   const sumPct=c.sumPct;
   instSec=`<div class="sec-t" style="font-size:13px;margin-top:18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><span>ประวัติการวางบิลแบ่งงวด</span><span style="font-weight:500;font-size:12px;color:${Math.abs(sumPct-100)<0.5?'var(--muted)':'var(--crit)'}">รวมทุกงวด ${(+sumPct.toFixed(2))}%${Math.abs(sumPct-100)<0.5?'':' — ควรเป็น 100%'}</span></div>
@@ -1436,7 +1471,7 @@ function openPay(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);co
  modal(`<div class="mh"><h3>บันทึกรับเงิน</h3><button class="x" onclick="closeModal()">✕</button></div>
  <div class="mb"><div style="display:flex;justify-content:space-between;background:var(--surface-2);border-radius:10px;padding:12px 14px;margin-bottom:16px"><span>ยอดรวมบิล <b>${B(c.total)}</b></span><span style="color:var(--crit)">คงเหลือ <b>${B(Math.max(0,c.bal))}</b></span></div>
   <div class="row2"><div class="field"><label>วันที่รับเงิน</label>${dpick('p_date',todayISO())}</div><div class="field"><label>วิธีชำระ</label><select id="p_method"><option>เงินสด</option><option selected>โอนเงิน</option><option>เช็ค</option><option>บัตรเครดิต</option><option>QR พร้อมเพย์</option></select></div></div>
-  <label class="whtbar"><input type="checkbox" id="p_whton" checked data-rate="${state.settings.whtRate||0.03}" data-total="${Math.max(0,c.bal)}" data-vat="${hasVatJob?(state.settings.vatRate||0):0}" onchange="applyWht('p')"><span><b>ลูกค้าหักภาษี ณ ที่จ่าย ${(+(((state.settings.whtRate||0.03)*100).toFixed(2)))}%</b> — ระบบคำนวณจากยอดก่อน VAT ให้อัตโนมัติ<br><span style="color:var(--muted);font-weight:500">ถ้าลูกค้ารายนี้ไม่หัก ณ ที่จ่าย ให้เอาเครื่องหมายถูกออก</span></span></label>
+  <label class="whtbar"><input type="checkbox" id="p_whton" checked data-rate="${(state.settings.whtRate!=null?state.settings.whtRate:0.03)}" data-total="${Math.max(0,c.bal)}" data-vat="${hasVatJob?(state.settings.vatRate||0):0}" onchange="applyWht('p')"><span><b>ลูกค้าหักภาษี ณ ที่จ่าย ${(+((((state.settings.whtRate!=null?state.settings.whtRate:0.03))*100).toFixed(2)))}%</b> — ระบบคำนวณจากยอดก่อน VAT ให้อัตโนมัติ<br><span style="color:var(--muted);font-weight:500">ถ้าลูกค้ารายนี้ไม่หัก ณ ที่จ่าย ให้เอาเครื่องหมายถูกออก</span></span></label>
   <div class="row2"><div class="field"><label>ภาษีหัก ณ ที่จ่าย (บาท)</label><input id="p_wht" type="number" step="any" value="0" oninput="whtEdited('p')"></div>
   <div class="field"><label>จำนวนเงินที่รับเข้าบัญชีจริง</label><input id="p_amount" type="number" step="any" value="${Math.max(0,c.bal)}" oninput="payNet('p')"></div></div>
   <div class="hint" id="p_net" style="background:var(--brand-100);border:1px solid #cfe0f8;border-radius:9px;padding:9px 12px;color:var(--brand-d);font-weight:600"></div>
@@ -1488,7 +1523,7 @@ function instPreview(id){const j=state.jobs.find(x=>x.id===id);if(!j)return;
  else base=Math.round(sub*(Number((document.getElementById('ni_pct')||{}).value)||0))/100;
  const pctShown=sub?Math.round(base/sub*10000)/100:0;
  const vat=Math.round(base*vr*100)/100, tot=Math.round((base+vat)*100)/100;
- const used=(j.installments||[]).reduce((a,i)=>a+instBase(j,i),0);
+ const used=(j.installments||[]).reduce((a,i,k)=>a+((instEditIdx!=null&&k===instEditIdx)?0:instBase(j,i)),0);
  const left=Math.round((sub-used-base)*100)/100;
  const el=document.getElementById('niAmt');if(!el)return;
  el.innerHTML=`ยอดงวดนี้ก่อน VAT <b>${B(base)}</b> (${(+pctShown.toFixed(2))}%)`+
@@ -1560,13 +1595,13 @@ function saveInst(id){const j=state.jobs.find(x=>x.id===id);
  save();closeModal();render();toast(editing?('แก้ไขงวดที่ '+no+' แล้ว'):('เพิ่มงวดที่ '+no+' แล้ว'),'ok');setTimeout(()=>openJob(id),50);}
 function delInst(id,idx){const j=state.jobs.find(x=>x.id===id);const it=(j.installments||[])[idx];if(!it)return;
  if(it.rc&&it.rc.issued){toast('งวดนี้ออกใบเสร็จแล้ว ลบไม่ได้','err');return;}
- modal(`<div class="mh"><h3>ลบงวดวางบิล</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการลบงวดที่ <b>${it.no}</b> (${it.pct}%) ของงาน <b>${esc(id)}</b> ใช่หรือไม่?</div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">ยกเลิก</button><button class="btn btn-d" onclick="doDelInst('${id}',${idx})">${I.trash}ลบงวด</button></div>`);}
+ modal(`<div class="mh"><h3>ลบงวดวางบิล</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการลบงวดที่ <b>${it.no}</b> (${instPctOf(j,it)}%) ของงาน <b>${esc(id)}</b> ใช่หรือไม่?</div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">ยกเลิก</button><button class="btn btn-d" onclick="doDelInst('${id}',${idx})">${I.trash}ลบงวด</button></div>`);}
 function doDelInst(id,idx){const j=state.jobs.find(x=>x.id===id);j.installments.splice(idx,1);save();closeModal();render();toast('ลบงวดแล้ว','ok');setTimeout(()=>openJob(id),50);}
 function payInst(id,idx){const j=state.jobs.find(x=>x.id===id);const it=(j.installments||[])[idx];if(!it)return;const amt=instTot(j,it);
  modal(`<div class="mh"><h3>รับเงินงวดที่ ${it.no} — ${j.id}</h3><button class="x" onclick="closeModal()">✕</button></div>
- <div class="mb"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:10px;padding:12px 14px;margin-bottom:16px"><span>งวดที่ ${it.no} (${it.pct}%)</span><span style="color:var(--brand-d)">ยอดบิลงวดนี้ <b>${B(amt)}</b></span></div>
+ <div class="mb"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:10px;padding:12px 14px;margin-bottom:16px"><span>งวดที่ ${it.no} (${instPctOf(j,it)}%)</span><span style="color:var(--brand-d)">ยอดบิลงวดนี้ <b>${B(amt)}</b></span></div>
   <div class="row2"><div class="field"><label>วันที่รับเงิน</label>${dpick('pi_date',todayISO())}</div><div class="field"><label>วิธีชำระ</label><select id="pi_method"><option>เงินสด</option><option selected>โอนเงิน</option><option>เช็ค</option><option>บัตรเครดิต</option><option>QR พร้อมเพย์</option></select></div></div>
-  <label class="whtbar"><input type="checkbox" id="pi_whton" checked data-rate="${state.settings.whtRate||0.03}" data-total="${amt}" data-vat="${(j.vat!==false)?(state.settings.vatRate||0):0}" onchange="applyWht('pi')"><span><b>ลูกค้าหักภาษี ณ ที่จ่าย ${(+(((state.settings.whtRate||0.03)*100).toFixed(2)))}%</b> — คำนวณจากยอดก่อน VAT ของงวดนี้ให้อัตโนมัติ<br><span style="color:var(--muted);font-weight:500">ถ้าลูกค้ารายนี้ไม่หัก ณ ที่จ่าย ให้เอาเครื่องหมายถูกออก</span></span></label>
+  <label class="whtbar"><input type="checkbox" id="pi_whton" checked data-rate="${(state.settings.whtRate!=null?state.settings.whtRate:0.03)}" data-total="${amt}" data-vat="${(j.vat!==false)?(state.settings.vatRate||0):0}" onchange="applyWht('pi')"><span><b>ลูกค้าหักภาษี ณ ที่จ่าย ${(+((((state.settings.whtRate!=null?state.settings.whtRate:0.03))*100).toFixed(2)))}%</b> — คำนวณจากยอดก่อน VAT ของงวดนี้ให้อัตโนมัติ<br><span style="color:var(--muted);font-weight:500">ถ้าลูกค้ารายนี้ไม่หัก ณ ที่จ่าย ให้เอาเครื่องหมายถูกออก</span></span></label>
   <div class="row2"><div class="field"><label>ภาษีหัก ณ ที่จ่าย (บาท)</label><input id="pi_wht" type="number" step="any" value="0" oninput="whtEdited('pi')"></div>
   <div class="field"><label>จำนวนเงินที่รับเข้าบัญชีจริง</label><input id="pi_amount" type="number" step="any" value="${amt}" oninput="payNet('pi')"></div></div>
   <div class="hint" id="pi_net" style="background:var(--brand-100);border:1px solid #cfe0f8;border-radius:9px;padding:9px 12px;color:var(--brand-d);font-weight:600"></div>
@@ -1611,7 +1646,7 @@ function docHTML(id,type,opt){opt=opt||{};const j=state.jobs.find(x=>x.id===id);
   INV:{th:'ใบแจ้งหนี้ / ใบวางบิล',en:'INVOICE',m:'ครบกำหนดชำระ',mv:invDue,date:invDate,sigL:'ผู้วางบิล / ผู้มีอำนาจลงนาม',sigR:'ผู้รับวางบิล (ลูกค้า)',bank:true},
   RC:{th:hasVat?'ใบเสร็จรับเงิน / ใบกำกับภาษี':'ใบเสร็จรับเงิน',en:hasVat?'RECEIPT / TAX INVOICE':'RECEIPT',m:'วิธีชำระเงิน',mv:rcMethod,date:rcDate,sigL:'ผู้รับเงิน',sigR:'ผู้มีอำนาจลงนาม',receipt:true,bank:true}}[type];
  const docNo=docNumOf(j,type,instObj?instObj.no:null);
- const rows=j.items.map((it,n)=>{const full=(Number(it.qty)||0)*(Number(it.price)||0);return `<tr><td class="c">${n+1}</td><td>${esc(it.desc)}</td><td class="c">${B0(it.qty)}</td><td class="c">${esc(it.unit)}</td><td class="n">${B(it.price)}</td><td class="n">${B(full)}</td></tr>`;}).join('')+Array.from({length:Math.max(0,(inst?4:8)-j.items.length)}).map(()=>`<tr><td class="c">&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>`).join('');
+ const rows=j.items.map((it,n)=>{const full=(Number(it.qty)||0)*(Number(it.price)||0);return `<tr><td class="c">${n+1}</td><td>${esc(it.desc)}</td><td class="c">${B0(it.qty)}</td><td class="c">${esc(it.unit)}</td><td class="n">${B(it.price)}</td><td class="n">${B(full)}</td></tr>`;}).join('')+Array.from({length:Math.max(0,(inst?4:5)-j.items.length)}).map(()=>`<tr><td class="c">&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>`).join('');
  const logo=s.logo?`<img src="${s.logo}" style="max-height:50px;max-width:150px;margin-bottom:8px">`:'';
  /* ใบเสร็จของงานที่รับเงินบางส่วน ต้องแสดงยอดที่รับจริง ไม่ใช่ยอดเต็มบิล */
  const rcSrc=(type==='RC')?((instObj&&instObj.rc)?instObj.rc:(!inst?lastPay:null)):null;
@@ -1629,20 +1664,35 @@ function docHTML(id,type,opt){opt=opt||{};const j=state.jobs.find(x=>x.id===id);
  const signName=s.signName?esc(s.signName):'';
  const signTitle=s.signTitle?esc(s.signTitle):'';
  return `<div class="doc ${s.docStyle==='ink'?'ink':''}"><div class="accent"></div><div class="pad">${stamp}
-  <div class="dh"><div>${logo}<div class="co-n">${esc(s.companyName)}</div><div class="co-i">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)} (${esc(s.branch)})<br>โทร. ${esc(s.phone)}${s.email?' · '+esc(s.email):''}${s.website?' · '+esc(s.website):''}</div></div>
+  <div class="dh"><div>${logo}<div class="co-n">${esc(s.companyName)}</div><div class="co-i">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)}${s.branch&&String(s.branch).trim()?' ('+esc(String(s.branch).trim())+')':''}<br>โทร. ${esc(s.phone)}${s.email?'&nbsp;&nbsp;&nbsp;'+esc(s.email):''}${s.website?'&nbsp;&nbsp;&nbsp;'+esc(s.website):''}</div></div>
    <div class="badge"><div class="tt">${cfg.th}</div><div class="te">${cfg.en}</div></div></div>
   <div class="parties"><div class="pcard"><div class="pt">ลูกค้า / ผู้ซื้อ (BILL TO)</div><div class="pn">${esc(cu.name||'')}</div><div class="pa">${esc(cu.address||'')}<br>เลขประจำตัวผู้เสียภาษี ${esc(cu.taxId||'-')}${(cu.phone||cu.contact)?'<br>โทร. '+esc(cu.phone||'-')+(cu.contact?' · ผู้ติดต่อ '+esc(cu.contact):''):''}</div></div>
    <div class="pcard meta"><div class="kv"><span>เลขที่เอกสาร</span><b>${docNo}</b></div><div class="kv"><span>วันที่</span><b>${dTH(cfg.date)}</b></div><div class="kv"><span>${cfg.m}</span><b>${cfg.mv}</b></div>${inst?`<div class="kv"><span>งวดที่</span><b>${inst.no||''}</b></div>`:''}</div></div>
   ${j.project?`<div class="projbar"><span class="pl">โครงการ</span><span class="pv">${esc(j.project)}</span></div>`:''}
   <table class="it"><thead><tr><th class="c">ลำดับ</th><th>รายละเอียด</th><th class="c">จำนวน</th><th class="c">หน่วย</th><th class="n">ราคา/หน่วย</th><th class="n">จำนวนเงิน</th></tr></thead><tbody>${rows}</tbody></table>
   <div class="btm"><div class="lft"><div class="baht">(ตัวอักษร) ${bahttext(shownTotal)}</div>${bankBlock}${rcNote}${notesHtml}</div>
-   <div class="tot">${inst?`<div class="tr"><span>มูลค่างานตามสัญญา</span><b>${B(c.sub)}</b></div>`+instList.map(x=>`<div class="tr"${x.cur?' style="color:#0d4fc4"':' style="color:#6b7688"'}><span>${type==='RC'&&x.cur?'รับชำระ':'วางบิล'}งวดที่ ${x.no}${x.cur?' (งวดนี้)':''}</span><b>${B(x.base)}</b></div>`).join('')+`<div class="tr" style="border-top:1px dashed #dbe4f0;padding-top:5px;margin-top:2px"><span>คงเหลือ</span><b>${B(Math.max(0,instLeft))}</b></div>`:`<div class="tr"><span>รวมเป็นเงิน</span><b>${B(rcPartial?rcSub:c.sub)}</b></div>`}${hasVat?`<div class="tr"><span>ภาษีมูลค่าเพิ่ม ${(vrate*100).toFixed(0)}%</span><b>${B(rcPartial?rcVat:(inst?dvat:c.vat))}</b></div>`:''}${rcPartial?`<div class="tr"><span>ยอด${inst?'งวดนี้':'ตามใบแจ้งหนี้'}</span><b>${B(rcBilled)}</b></div>`:''}<div class="tr g"><span>${rcPartial?'รับชำระครั้งนี้':'รวมทั้งสิ้น'}</span><span>${B(shownTotal)}</span></div></div></div>
+   <div class="tot">${inst?`<div class="tr"><span>มูลค่างานตามสัญญา</span><b>${B(c.sub)}</b></div>`+instList.map(x=>{const shown=(type==='RC'&&x.cur&&rcPartial)?rcSub:x.base;return `<div class="tr"${x.cur?' style="color:#0d4fc4"':' style="color:#6b7688"'}><span>${type==='RC'&&x.cur?'รับชำระ':'วางบิล'}งวดที่ ${x.no}${x.cur?' (งวดนี้)':''}</span><b>${B(shown)}</b></div>`;}).join('')+`<div class="tr" style="border-top:1px dashed #dbe4f0;padding-top:5px;margin-top:2px"><span>คงเหลือ</span><b>${B(Math.max(0,(type==='RC'&&rcPartial)?Math.round((c.sub-(instDone-dsub)-rcSub)*100)/100:instLeft))}</b></div>`:`<div class="tr"><span>รวมเป็นเงิน</span><b>${B(rcPartial?rcSub:c.sub)}</b></div>`}${hasVat?`<div class="tr"><span>ภาษีมูลค่าเพิ่ม ${(vrate*100).toFixed(0)}%</span><b>${B(rcPartial?rcVat:(inst?dvat:c.vat))}</b></div>`:''}${rcPartial?`<div class="tr"><span>ยอด${inst?'งวดนี้':'ตามใบแจ้งหนี้'}</span><b>${B(rcBilled)}</b></div>`:''}<div class="tr g"><span>${rcPartial?'รับชำระครั้งนี้':'รวมทั้งสิ้น'}</span><span>${B(shownTotal)}</span></div></div></div>
   <div class="sign"><div class="s"><div class="sl"></div>${signName?`<div class="snm">( ${signName} )</div>`:''}${cfg.sigL}${signTitle?`<div style="color:#9aa4b5">${signTitle}</div>`:''}<div style="margin-top:3px;color:#9aa4b5">วันที่ ......./......./.......</div></div><div class="s"><div class="sl"></div>${cfg.sigR}<div style="margin-top:3px;color:#9aa4b5">วันที่ ......./......./.......</div></div></div>
   <div class="foot">ขอบคุณที่ให้ความไว้วางใจใช้บริการ • เอกสารจัดทำโดยระบบบัญชีของ ${esc(s.companyName)}</div>
  </div></div>`;
 }
-function printDoc(id,type,opt){document.getElementById('print').innerHTML=docHTML(id,type,opt);window.print();}
-function printMany(list){if(!list||!list.length){toast('ยังไม่ได้เลือกเอกสาร','err');return;}document.getElementById('print').innerHTML=list.map(x=>docHTML(x.id,x.type,(x.ii!=null?{ii:x.ii}:null))).join('');window.print();}
+function fitPrint(){const pr=document.getElementById('print');if(!pr)return;
+ const maxH=Math.floor((297-20)*96/25.4)-6;                     /* ความสูงที่พิมพ์ได้ของ A4 ขอบ 10mm (เผื่อเศษ 6px) */
+ const sv={d:pr.style.display,p:pr.style.position,l:pr.style.left,t:pr.style.top,w:pr.style.width};
+ pr.style.display='block';pr.style.position='absolute';pr.style.left='-10000px';pr.style.top='0';pr.style.width='210mm';
+ pr.querySelectorAll('.doc').forEach(d=>{
+  d.style.zoom='';
+  let z=1,h=d.getBoundingClientRect().height;                   /* ต้องใช้ค่านี้ เพราะสะท้อนผลของ zoom จริง */
+  for(let i=0;i<12&&h>maxH&&z>0.6;i++){                          /* ย่อทีละรอบ เพราะย่อแล้วข้อความจัดบรรทัดใหม่ */
+   z=Math.max(0.6,z*(maxH/h)*0.995);
+   d.style.zoom=String(Math.floor(z*1000)/1000);
+   h=d.getBoundingClientRect().height;
+  }
+  if(z>=0.999)d.style.zoom='';
+ });
+ pr.style.display=sv.d;pr.style.position=sv.p;pr.style.left=sv.l;pr.style.top=sv.t;pr.style.width=sv.w;}
+function printDoc(id,type,opt){document.getElementById('print').innerHTML=docHTML(id,type,opt);fitPrint();window.print();}
+function printMany(list){if(!list||!list.length){toast('ยังไม่ได้เลือกเอกสาร','err');return;}document.getElementById('print').innerHTML=list.map(x=>docHTML(x.id,x.type,(x.ii!=null?{ii:x.ii}:null))).join('');fitPrint();window.print();}
 function advanceHTML(e,mode){const s=state.settings;const isClear=(mode==='clear');
  const title=isClear?'ใบเคลียร์เงินทดรองจ่าย':'ใบเบิกเงินทดรองจ่าย';
  const en=isClear?'ADVANCE CLEARING':'ADVANCE PAYMENT VOUCHER';
@@ -1654,7 +1704,7 @@ function advanceHTML(e,mode){const s=state.settings;const isClear=(mode==='clear
  const signName=s.signName?esc(s.signName):'';const signTitle=s.signTitle?esc(s.signTitle):'';
  const sig1=isClear?'ผู้เคลียร์เงิน':'ผู้ขอเบิก';const sig3=isClear?'ผู้รับเงินคืน / คืนเงิน':'ผู้จ่ายเงิน';
  return `<div class="doc ${s.docStyle==='ink'?'ink':''}"><div class="accent"></div><div class="pad">
-  <div class="dh"><div>${logo}<div class="co-n">${esc(s.companyName)}</div><div class="co-i">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)} (${esc(s.branch)})<br>โทร. ${esc(s.phone)}${s.email?' · '+esc(s.email):''}</div></div>
+  <div class="dh"><div>${logo}<div class="co-n">${esc(s.companyName)}</div><div class="co-i">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)}${s.branch&&String(s.branch).trim()?' ('+esc(String(s.branch).trim())+')':''}<br>โทร. ${esc(s.phone)}${s.email?'&nbsp;&nbsp;&nbsp;'+esc(s.email):''}</div></div>
    <div class="badge"><div class="tt">${title}</div><div class="te">${en}</div></div></div>
   <div class="parties"><div class="pcard"><div class="pt">ผู้ขอเบิกเงิน</div><div class="pn">${esc(e.reqBy||e.payee||'-')}</div><div class="pa">วัตถุประสงค์: ${esc(e.desc||'-')}</div></div>
    <div class="pcard meta"><div class="kv"><span>เลขที่เอกสาร</span><b>${docNo}</b></div><div class="kv"><span>วันที่</span><b>${dTH(e.date)}</b></div><div class="kv"><span>ประเภท</span><b>${isClear?'เคลียร์เงินทดรองจ่าย':'เบิกเงินทดรองจ่าย'}</b></div></div></div>
@@ -1664,7 +1714,7 @@ function advanceHTML(e,mode){const s=state.settings;const isClear=(mode==='clear
   <div class="sign"><div class="s"><div class="sl"></div>${sig1}<div style="margin-top:3px;color:#9aa4b5">วันที่ ......./......./.......</div></div><div class="s"><div class="sl"></div>${signName?`<div class="snm">( ${signName} )</div>`:''}ผู้อนุมัติ${signTitle?`<div style="color:#9aa4b5">${signTitle}</div>`:''}<div style="margin-top:3px;color:#9aa4b5">วันที่ ......./......./.......</div></div><div class="s"><div class="sl"></div>${sig3}<div style="margin-top:3px;color:#9aa4b5">วันที่ ......./......./.......</div></div></div>
   <div class="foot">เอกสารเงินทดรองจ่าย • จัดทำโดยระบบบัญชีของ ${esc(s.companyName)}</div>
  </div></div>`;}
-function printAdvance(id,mode){const e=state.expenses.find(x=>x.id===id);if(!e){toast('ไม่พบรายการ','err');return;}document.getElementById('print').innerHTML=advanceHTML(e,mode);window.print();}
+function printAdvance(id,mode){const e=state.expenses.find(x=>x.id===id);if(!e){toast('ไม่พบรายการ','err');return;}document.getElementById('print').innerHTML=advanceHTML(e,mode);fitPrint();window.print();}
 function poHTML(id){const e=state.expenses.find(x=>x.id===id);if(!e)return '';const s=state.settings;
  const pay=e.payeeId?(state.payees||[]).find(p=>p.id===e.payeeId):null;
  const vname=pay?pay.name:(e.payee||e.reqBy||'-');const vaddr=pay?(pay.address||''):'';const vtax=pay?(pay.taxId||''):'';
@@ -1675,7 +1725,7 @@ function poHTML(id){const e=state.expenses.find(x=>x.id===id);if(!e)return '';co
  const logo=s.logo?`<img src="${s.logo}" style="max-height:50px;max-width:150px;margin-bottom:8px">`:'';
  const docNo='PO-'+String(e.date||'').replace(/-/g,'')+'-'+String(e.id||'').replace(/\D/g,'').slice(-3);
  return `<div class="doc ${s.docStyle==='ink'?'ink':''}"><div class="accent"></div><div class="pad">
-  <div class="dh"><div>${logo}<div class="co-n">${esc(s.companyName)}</div><div class="co-i">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)} (${esc(s.branch)})<br>โทร. ${esc(s.phone)}${s.email?' · '+esc(s.email):''}</div></div>
+  <div class="dh"><div>${logo}<div class="co-n">${esc(s.companyName)}</div><div class="co-i">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)}${s.branch&&String(s.branch).trim()?' ('+esc(String(s.branch).trim())+')':''}<br>โทร. ${esc(s.phone)}${s.email?'&nbsp;&nbsp;&nbsp;'+esc(s.email):''}</div></div>
    <div class="badge"><div class="tt">ใบสั่งจ้าง / ใบสั่งซื้อ</div><div class="te">PURCHASE ORDER</div></div></div>
   <div class="parties"><div class="pcard"><div class="pt">ผู้รับจ้าง / ผู้ขาย (VENDOR)</div><div class="pn">${esc(vname)}</div><div class="pa">${esc(vaddr||'-')}${vtax?'<br>เลขประจำตัวผู้เสียภาษี '+esc(vtax):''}</div></div>
    <div class="pcard meta"><div class="kv"><span>เลขที่ PO</span><b>${docNo}</b></div><div class="kv"><span>วันที่</span><b>${dTH(e.date)}</b></div><div class="kv"><span>ประเภท</span><b>ใบสั่งจ้าง / สั่งซื้อ</b></div></div></div>
@@ -1685,7 +1735,7 @@ function poHTML(id){const e=state.expenses.find(x=>x.id===id);if(!e)return '';co
   <div class="sign"><div class="s"><div class="sl"></div>${s.signName?`<div class="snm">( ${esc(s.signName)} )</div>`:''}ผู้สั่งจ้าง / ผู้มีอำนาจ${s.signTitle?`<div style="color:#9aa4b5">${esc(s.signTitle)}</div>`:''}<div style="margin-top:3px;color:#9aa4b5">วันที่ ......./......./.......</div></div><div class="s"><div class="sl"></div>ผู้รับงาน / ผู้ขาย<div style="margin-top:3px;color:#9aa4b5">วันที่ ......./......./.......</div></div></div>
   <div class="foot">ใบสั่งจ้าง / ใบสั่งซื้อ • จัดทำโดยระบบบัญชีของ ${esc(s.companyName)}</div>
  </div></div>`;}
-function printPO(id){const h=poHTML(id);if(!h){toast('ไม่พบรายการ','err');return;}document.getElementById('print').innerHTML=h;window.print();}
+function printPO(id){const h=poHTML(id);if(!h){toast('ไม่พบรายการ','err');return;}document.getElementById('print').innerHTML=h;fitPrint();window.print();}
 
 /* ============ DATA IO ============ */
 function exportData(){const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='backup-บัญชี-'+todayISO()+'.json';a.click();toast('ดาวน์โหลดไฟล์สำรองแล้ว','ok');}
@@ -1709,11 +1759,14 @@ function resetData(){modal(`<div class="mh"><h3>ล้างข้อมูล</
  <div class="mf"><button class="btn btn-g" onclick="closeModal()">ยกเลิก</button><button class="btn btn-d" onclick="doResetData()">${I.trash}ล้างข้อมูล</button></div>`);}
 function doResetData(){const el=document.getElementById('rst_cloud');const alsoCloud=!!(el&&el.checked);
  state=blank();
- if(alsoCloud){hasUserEdits=true;save({sync:true});}
+ if(alsoCloud){hasUserEdits=true;mustPullFirst=false;pendingPush=false;save({sync:false});
+  (async()=>{const ok=await cloudSave();toast(ok?'ล้างข้อมูลทั้งเครื่องนี้และคลาวด์แล้ว':'ล้างในเครื่องแล้ว แต่ล้างบนคลาวด์ไม่สำเร็จ — กด “ส่งขึ้นคลาวด์” อีกครั้ง',ok?'ok':'err');})();
+  try{const g=gsCfg();if(g.url&&g.auto)gsBackup(true);}catch(e){}}
  else{/* ล้างเฉพาะเครื่องนี้: ล้างเวลาบันทึกด้วย เพื่อให้ครั้งหน้าดึงของจริงจากคลาวด์กลับมา ไม่ใช่เอาค่าว่างไปทับ */
   try{localStorage.setItem(LS,JSON.stringify(state));localStorage.removeItem(SAVEDAT);}catch(e){}
-  hasUserEdits=false;mustPullFirst=true;clearTimeout(cloudT);clearTimeout(gsT);try{localStorage.removeItem(SYNCED);}catch(e){}}
- closeModal();render();toast(alsoCloud?'ล้างข้อมูลทั้งเครื่องนี้และคลาวด์แล้ว':'ล้างเฉพาะเครื่องนี้แล้ว — ข้อมูลบนคลาวด์ยังอยู่ครบ (เปิดใหม่จะดึงกลับมา)','ok');}
+  hasUserEdits=false;mustPullFirst=true;clearTimeout(cloudT);clearTimeout(gsT);try{localStorage.removeItem(SYNCED);}catch(e){}
+  setTimeout(()=>{try{cloudSyncStart();}catch(e){}},250);}   /* ดึงของจริงกลับทันที ไม่ค้างสถานะห้ามซิงค์ */
+ closeModal();render();if(!alsoCloud)toast('ล้างเฉพาะเครื่องนี้แล้ว — กำลังดึงข้อมูลจากคลาวด์กลับมา','ok');}
 
 /* ============ STATEMENT (เดินบัญชี) ============ */
 let stmtMonth='all';let stmtSel=new Set();
@@ -1774,7 +1827,7 @@ function openStmt(id){const t=id?state.statements.find(x=>x.id===id):{id:'',date
   <div class="field"><label>หมายเหตุ</label><input id="t_note" value="${esc(t.note)}"></div>
  </div>
  <div class="mf"><button class="btn btn-g" onclick="closeModal()">ยกเลิก</button><button class="btn btn-p" onclick="saveStmt('${id||''}')">${I.check}บันทึก</button></div>`);}
-function saveStmt(id){const g=k=>document.getElementById('t_'+k).value;const date=parseDMY(g('date')),desc=g('desc').trim();if(!date||!desc){toast('กรุณากรอกวันที่และรายละเอียด','err');return;}const o={date,time:g('time').trim(),desc,channel:g('channel').trim(),category:g('category').trim(),moneyIn:Number(g('in'))||0,moneyOut:Number(g('out'))||0,balance:0,note:g('note').trim()};if(id){const i=state.statements.findIndex(x=>x.id===id);o.id=id;state.statements[i]=o;}else{o.id='S'+Date.now();state.statements.push(o);}save();closeModal();render();toast('บันทึกรายการแล้ว','ok');}
+function saveStmt(id){const g=k=>document.getElementById('t_'+k).value;const date=parseDMY(g('date')),desc=g('desc').trim();if(!date||!desc){toast('กรุณากรอกวันที่และรายละเอียด','err');return;}const o={date,time:g('time').trim(),desc,channel:g('channel').trim(),category:g('category').trim(),moneyIn:Number(g('in'))||0,moneyOut:Number(g('out'))||0,balance:0,note:g('note').trim()};if(id){const i=state.statements.findIndex(x=>x.id===id);if(i<0){toast('ไม่พบรายการนี้แล้ว (อาจถูกลบ หรือซิงค์จากเครื่องอื่น) — ยังไม่ได้บันทึก','err');return;}o.id=id;state.statements[i]=o;}else{o.id=uid('S');state.statements.push(o);}save();closeModal();render();toast('บันทึกรายการแล้ว','ok');}
 function delStmt(id){const t=state.statements.find(x=>x.id===id);if(!t)return;pendDel={t:'stmt',id:id};confirmDel('ลบรายการเดินบัญชี',`${dTH(t.date)} · ${esc(t.desc||'')}<br>เงินเข้า ${B(t.moneyIn)} · เงินออก ${B(t.moneyOut)}`);}
 function stmtHeader(row,cands){for(const c of cands){for(const k in row){if(String(k).trim().toLowerCase()===c.toLowerCase())return row[k];}}return '';}
 function importStmtExcel(file){const r=new FileReader();r.onload=e=>{try{const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});const wsName=wb.SheetNames.includes('เดินบัญชี')?'เดินบัญชี':wb.SheetNames[0];const rj=XLSX.utils.sheet_to_json(wb.Sheets[wsName],{defval:''});const P=[];
@@ -1842,14 +1895,16 @@ function stmtReview(rows){stmtDraft=rows;
 function saveStmtDraft(){let n=0;stmtDraft.forEach(t=>{if(!t.desc&&!t.moneyIn&&!t.moneyOut)return;state.statements.push({id:uid('S'),date:xdate(t.date),time:t.time||'',desc:t.desc||'(รายการ)',channel:t.channel||'',category:t.category||'',moneyIn:Number(t.moneyIn)||0,moneyOut:Number(t.moneyOut)||0,balance:Number(t.balance)||0,note:t.note||'นำเข้าจากไฟล์'});n++;});save();closeModal();render();toast('บันทึกรายการรับ-จ่าย '+n+' รายการแล้ว','ok');}
 
 /* ============ EXCEL (SAVE / Add file) ============ */
-function xdate(v){if(v==null||v==='')return '';if(typeof v==='number'){const d=XLSX.SSF.parse_date_code(v);if(d)return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0');}if(v instanceof Date)return v.getFullYear()+'-'+String(v.getMonth()+1).padStart(2,'0')+'-'+String(v.getDate()).padStart(2,'0');const s=String(v).trim();if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.slice(0,10);const m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);if(m)return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');return s;}
+function xnum(v){const t=String(v==null?'':v).replace(/[^0-9.\-]/g,'');if(t===''||t==='-'||t==='.')return NaN;const x=parseFloat(t);return isFinite(x)?x:NaN;}
+function xnum0(v){const x=xnum(v);return isFinite(x)?x:0;}
+function xdate(v){if(v==null||v==='')return '';if(typeof v==='number'){const d=XLSX.SSF.parse_date_code(v);if(d)return d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0');}if(v instanceof Date)return v.getFullYear()+'-'+String(v.getMonth()+1).padStart(2,'0')+'-'+String(v.getDate()).padStart(2,'0');const s=String(v).trim();if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.slice(0,10);const m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);if(m){let y=parseInt(m[3]);if(y>2400)y-=543;return String(y)+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');}return s;}
 function exportExcel(){try{const s=state.settings;const wb=XLSX.utils.book_new();
  const setR=[['ฟิลด์','ค่า'],['companyName',s.companyName],['addr1',s.addr1],['addr2',s.addr2],['taxId',s.taxId],['branch',s.branch],['phone',s.phone],['email',s.email],['website',s.website],['bank',s.bank],['accName',s.accName],['accNo',s.accNo],['bankBranch',s.bankBranch],['signName',s.signName||''],['signTitle',s.signTitle||''],['vatRate',s.vatRate],['whtRate',s.whtRate!=null?s.whtRate:0.03],['creditDays',s.creditDays],['validDays',s.validDays],['footer',s.footer]];
  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(setR),'ตั้งค่า');
  const cusR=[['รหัสลูกค้า','ชื่อลูกค้า','ที่อยู่','เลขผู้เสียภาษี','ผู้ติดต่อ','โทรศัพท์','อีเมล']];state.customers.forEach(c=>cusR.push([c.code,c.name,c.address,c.taxId,c.contact,c.phone,c.email]));
  const wsC=XLSX.utils.aoa_to_sheet(cusR);wsC['!cols']=[{wch:12},{wch:30},{wch:42},{wch:18},{wch:16},{wch:15},{wch:22}];XLSX.utils.book_append_sheet(wb,wsC,'ลูกค้า');
- const jobR=[['เลขที่งาน','รหัสลูกค้า','โครงการ','วันที่','สถานะ','หมายเหตุ','เงื่อนไข','ออกใบแจ้งหนี้','วันที่ใบแจ้งหนี้','เครดิต(วัน)','ออกใบเสร็จ','มี VAT']];state.jobs.forEach(j=>jobR.push([j.id,j.customerCode,j.project||'',j.qtDate,j.status,j.note,j.terms||'',(j.inv&&j.inv.issued)?'ใช่':'',j.inv?j.inv.date:'',j.inv?j.inv.creditDays:'',j.rcIssued?'ใช่':'',(j.vat===false)?'':'ใช่']));
- const wsJ=XLSX.utils.aoa_to_sheet(jobR);wsJ['!cols']=[{wch:20},{wch:12},{wch:26},{wch:12},{wch:10},{wch:24},{wch:30},{wch:12},{wch:14},{wch:10},{wch:10},{wch:8}];XLSX.utils.book_append_sheet(wb,wsJ,'เอกสาร');
+ const jobR=[['เลขที่งาน','รหัสลูกค้า','โครงการ','วันที่','สถานะ','หมายเหตุ','เงื่อนไข','ออกใบแจ้งหนี้','วันที่ใบแจ้งหนี้','เครดิต(วัน)','ออกใบเสร็จ','มี VAT','พักไว้(HOLD)','หมายเหตุ HOLD']];state.jobs.forEach(j=>jobR.push([j.id,j.customerCode,j.project||'',j.qtDate,j.status,j.note,j.terms||'',(j.inv&&j.inv.issued)?'ใช่':'',j.inv?j.inv.date:'',j.inv?j.inv.creditDays:'',j.rcIssued?'ใช่':'',(j.vat===false)?'':'ใช่',j.hold?'ใช่':'',j.holdNote||'']));
+ const wsJ=XLSX.utils.aoa_to_sheet(jobR);wsJ['!cols']=[{wch:20},{wch:12},{wch:26},{wch:12},{wch:10},{wch:24},{wch:30},{wch:12},{wch:14},{wch:10},{wch:10},{wch:8},{wch:11},{wch:22}];XLSX.utils.book_append_sheet(wb,wsJ,'เอกสาร');
  const itR=[['เลขที่งาน','ลำดับ','รายละเอียด','จำนวน','หน่วย','ราคาต่อหน่วย']];state.jobs.forEach(j=>(j.items||[]).forEach((it,i)=>itR.push([j.id,i+1,it.desc,it.qty,it.unit,it.price])));
  const wsI=XLSX.utils.aoa_to_sheet(itR);wsI['!cols']=[{wch:20},{wch:7},{wch:40},{wch:9},{wch:10},{wch:14}];XLSX.utils.book_append_sheet(wb,wsI,'รายการ');
  const payR=[['เลขที่งาน','วันที่รับเงิน','วิธีชำระ','จำนวนเงิน','หัก ณ ที่จ่าย','หมายเหตุ']];state.jobs.forEach(j=>(j.payments||[]).forEach(p=>payR.push([j.id,p.date,p.method,p.amount,p.wht,p.note])));
@@ -1870,12 +1925,12 @@ function exportExcel(){try{const s=state.settings;const wb=XLSX.utils.book_new()
 function importExcel(file){const r=new FileReader();r.onload=e=>{try{const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
  const sh=n=>wb.Sheets[n]?XLSX.utils.sheet_to_json(wb.Sheets[n],{defval:''}):[];let ac=0,aj=0,ae=0,as=0;
  sh('ลูกค้า').forEach(row=>{const code=String(row['รหัสลูกค้า']||'').trim();if(!code)return;const o={code,name:String(row['ชื่อลูกค้า']||''),address:String(row['ที่อยู่']||''),taxId:String(row['เลขผู้เสียภาษี']||''),contact:String(row['ผู้ติดต่อ']||''),phone:String(row['โทรศัพท์']||''),email:String(row['อีเมล']||'')};const i=state.customers.findIndex(c=>c.code===code);if(i>=0)state.customers[i]=o;else{state.customers.push(o);ac++;}});
- const itBy={};sh('รายการ').forEach(row=>{const jid=String(row['เลขที่งาน']||'').trim();if(!jid)return;(itBy[jid]=itBy[jid]||[]).push({desc:String(row['รายละเอียด']||''),qty:Number(row['จำนวน'])||0,unit:String(row['หน่วย']||''),price:Number(row['ราคาต่อหน่วย'])||0});});
+ const itBy={};sh('รายการ').forEach(row=>{const jid=String(row['เลขที่งาน']||'').trim();if(!jid)return;(itBy[jid]=itBy[jid]||[]).push({desc:String(row['รายละเอียด']||''),qty:xnum0(row['จำนวน']),unit:String(row['หน่วย']||''),price:xnum0(row['ราคาต่อหน่วย'])});});
  const pBy={};sh('รับชำระ').forEach(row=>{const jid=String(row['เลขที่งาน']||'').trim();if(!jid)return;(pBy[jid]=pBy[jid]||[]).push({date:xdate(row['วันที่รับเงิน']),method:String(row['วิธีชำระ']||''),amount:Number(row['จำนวนเงิน'])||0,wht:Number(row['หัก ณ ที่จ่าย'])||0,note:String(row['หมายเหตุ']||'')});});
  const inBy={};sh('งวดวางบิล').forEach(row=>{const jid=String(row['เลขที่งาน']||'').trim();if(!jid)return;const paid=String(row['ชำระแล้ว']||'').trim();const _bt=String(row['ยอดงวด(บาท)']==null?'':row['ยอดงวด(บาท)']).replace(/[,\s]/g,'');const _hasBt=_bt!==''&&isFinite(parseFloat(_bt));
-   const it={no:Number(row['งวดที่'])||((inBy[jid]||[]).length+1),pct:Number(row['สัดส่วน(%)'])||0,mode:_hasBt?'baht':'pct',amt:_hasBt?Math.round(parseFloat(_bt)*100)/100:undefined,date:xdate(row['วันที่วางบิล']),creditDays:Number(row['เครดิต(วัน)'])||state.settings.creditDays,rc:paid?{issued:true,date:xdate(row['วันที่รับเงิน']),method:String(row['วิธีชำระ']||''),amount:Number(row['จำนวนรับ'])||0,wht:Number(row['หัก ณ ที่จ่าย'])||0,note:String(row['หมายเหตุ']||'')}:null};(inBy[jid]=inBy[jid]||[]).push(it);});
+   const it={no:Number(row['งวดที่'])||((inBy[jid]||[]).length+1),pct:Number(row['สัดส่วน(%)'])||0,mode:_hasBt?'baht':'pct',amt:_hasBt?Math.round(parseFloat(_bt)*100)/100:undefined,date:xdate(row['วันที่วางบิล']),creditDays:(function(v){const x=parseFloat(String(v==null?'':v).replace(/[^0-9.\-]/g,''));return isFinite(x)?x:state.settings.creditDays;})(row['เครดิต(วัน)']),rc:paid?{issued:true,date:xdate(row['วันที่รับเงิน']),method:String(row['วิธีชำระ']||''),amount:Number(row['จำนวนรับ'])||0,wht:Number(row['หัก ณ ที่จ่าย'])||0,note:String(row['หมายเหตุ']||'')}:null};(inBy[jid]=inBy[jid]||[]).push(it);});
  Object.keys(inBy).forEach(k=>inBy[k].sort((a,b)=>(a.no-b.no)||((a.date<b.date)?-1:1)));
- sh('เอกสาร').forEach(row=>{const id=String(row['เลขที่งาน']||'').trim();if(!id)return;const invYes=String(row['ออกใบแจ้งหนี้']||'').trim();const inv=invYes?{issued:true,date:xdate(row['วันที่ใบแจ้งหนี้'])||xdate(row['วันที่'])||todayISO(),creditDays:Number(row['เครดิต(วัน)'])||state.settings.creditDays}:null;const ex=state.jobs.find(j=>j.id===id);const o={id,customerCode:String(row['รหัสลูกค้า']||'').trim(),project:String(row['โครงการ']||(ex&&ex.project)||''),terms:String(row['เงื่อนไข']||(ex&&ex.terms)||''),qtDate:xdate(row['วันที่']),status:String(row['สถานะ']||'ร่าง'),note:String(row['หมายเหตุ']||''),items:itBy[id]||(ex&&ex.items)||[],inv:inv||(ex?ex.inv:null),payments:pBy[id]||(ex&&ex.payments)||[],installments:inBy[id]||(ex&&ex.installments)||[],vat:(('มี VAT' in row)?String(row['มี VAT']||'').trim()!=='':(ex?ex.vat:undefined)),rcIssued:String(row['ออกใบเสร็จ']||'').trim()?true:(ex?!!ex.rcIssued:false)};
+ sh('เอกสาร').forEach(row=>{const id=String(row['เลขที่งาน']||'').trim();if(!id)return;const invYes=String(row['ออกใบแจ้งหนี้']||'').trim();const inv=invYes?{issued:true,date:xdate(row['วันที่ใบแจ้งหนี้'])||xdate(row['วันที่'])||todayISO(),creditDays:(function(v){const x=parseFloat(String(v==null?'':v).replace(/[^0-9.\-]/g,''));return isFinite(x)?x:state.settings.creditDays;})(row['เครดิต(วัน)'])}:null;const ex=state.jobs.find(j=>j.id===id);const o={id,customerCode:String(row['รหัสลูกค้า']||'').trim(),project:String(row['โครงการ']||(ex&&ex.project)||''),terms:String(row['เงื่อนไข']||(ex&&ex.terms)||''),qtDate:xdate(row['วันที่']),status:String(row['สถานะ']||'ร่าง'),note:String(row['หมายเหตุ']||''),items:itBy[id]||(ex&&ex.items)||[],inv:inv||(ex?ex.inv:null),payments:pBy[id]||(ex&&ex.payments)||[],installments:inBy[id]||(ex&&ex.installments)||[],vat:(('มี VAT' in row)?String(row['มี VAT']||'').trim()!=='':(ex?ex.vat:undefined)),rcIssued:String(row['ออกใบเสร็จ']||'').trim()?true:(ex?!!ex.rcIssued:false),hold:(('พักไว้(HOLD)' in row)?String(row['พักไว้(HOLD)']||'').trim()!=='':!!(ex&&ex.hold)),holdNote:(('หมายเหตุ HOLD' in row)?String(row['หมายเหตุ HOLD']||''):((ex&&ex.holdNote)||'')),holdAt:(ex&&ex.holdAt)||''};
   if(o.vat===undefined)delete o.vat;
   const i=state.jobs.findIndex(j=>j.id===id);if(i>=0)state.jobs[i]=o;else{state.jobs.push(o);aj++;}});
  sh('รายจ่าย').forEach(row=>{const desc=String(row['รายละเอียด']||'');const amt=Number(row['จำนวน(ก่อนVAT)'])||0;if(!desc&&!amt)return;const id=String(row['id']||'').trim()||(uid('E'));
@@ -1922,7 +1977,7 @@ function openPayee(id){const p=id?(state.payees||[]).find(x=>x.id===id):{id:'',n
  <div class="mf"><button class="btn btn-g" onclick="closeModal()">ยกเลิก</button><button class="btn btn-p" onclick="savePayee('${id||''}')">${I.check}บันทึก</button></div>`,true);}
 function savePayee(id){const g=k=>document.getElementById('p_'+k).value;const name=g('name').trim();if(!name){toast('กรุณากรอกชื่อ','err');return;}
  const o={name,taxId:g('taxid').trim(),address:g('addr').trim(),payeeType:g('type'),section:g('section'),incomeDesc:g('incomedesc').trim(),issueType:g('issue'),note:g('note').trim()};
- state.payees=state.payees||[];if(id){const i=state.payees.findIndex(x=>x.id===id);o.id=id;state.payees[i]=o;}else{o.id='P'+Date.now();state.payees.push(o);}
+ state.payees=state.payees||[];if(id){const i=state.payees.findIndex(x=>x.id===id);if(i<0){toast('ไม่พบรายการนี้แล้ว (อาจถูกลบ หรือซิงค์จากเครื่องอื่น) — ยังไม่ได้บันทึก','err');return;}o.id=id;state.payees[i]=o;}else{o.id=uid('P');state.payees.push(o);}
  save();closeModal();render();toast('บันทึกผู้รับเงินแล้ว','ok');}
 function delPayee(id){const p=(state.payees||[]).find(x=>x.id===id);if(!p)return;const used=(state.expenses||[]).filter(e=>e.payeeId===id).length;pendDel={t:'payee',id:id};confirmDel('ลบผู้รับเงิน',`<b>${esc(p.name||'')}</b>${p.taxId?'<br>เลขผู้เสียภาษี '+esc(p.taxId):''}`+(used?`<div style="margin-top:10px;background:#fff5f2;border:1px solid #ffd6c9;border-radius:9px;padding:10px 12px;color:#8a2b12;font-size:12.5px;line-height:1.7">⚠️ มีรายจ่ายอ้างอิงผู้รับเงินรายนี้อยู่ <b>${used}</b> รายการ — ถ้าลบ ใบ 50 ทวิ / ภ.ง.ด. ของรายการเหล่านั้นจะไม่มีชื่อ-ที่อยู่-เลขผู้เสียภาษี</div>`:''));}
 function pndIncomeType(e,pay,type){if(pay&&pay.section)return sectionLabel(pay.section,pay.incomeDesc);if(pay&&pay.incomeType)return pay.incomeType;if(type==='1')return 'เงินเดือน ค่าจ้าง ม.40(1)';if((e.category||'')==='ค่าเช่า')return 'ค่าเช่าทรัพย์สิน (ม.3 เตรส)';return 'ค่าจ้างทำของ/รับเหมา/บริการ (ม.3 เตรส)';}
@@ -1954,7 +2009,7 @@ function pndFormHTML(month,type){const s=state.settings;const rows=pndRows(month
  const subt=type==='1'?'แบบยื่นรายการภาษีเงินได้หัก ณ ที่จ่าย (เงินได้ ม.40(1) เงินเดือน/ค่าจ้าง)':'แบบยื่นรายการภาษีเงินได้หัก ณ ที่จ่าย (เงินได้ ม.40(3)-(8) ผู้รับเงินเป็นบุคคลธรรมดา)';
  const bodyRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${esc(r.taxId||'-')}</td><td>${esc(r.name)}${r.address?`<div style="font-size:9px;color:#7a8598">${esc(r.address)}</div>`:''}</td><td style="font-size:9.5px">${esc(r.incomeType)}</td><td class="c">${dTH(r.date)}</td><td class="n">${B(r.base)}</td><td class="c">${(+(r.rate*100).toFixed(2))}%</td><td class="n">${B(r.tax)}</td></tr>`).join('')+Array.from({length:Math.max(0,6-rows.length)}).map(()=>`<tr><td class="c">&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`).join('');
  return `<div class="doc ${s.docStyle==='ink'?'ink':''}"><div class="accent"></div><div class="pad">
-  <div class="dh"><div><div class="co-n">${esc(s.companyName)}</div><div class="co-i">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)} (${esc(s.branch)})<br>โทร. ${esc(s.phone)}</div></div>
+  <div class="dh"><div><div class="co-n">${esc(s.companyName)}</div><div class="co-i">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)}${s.branch&&String(s.branch).trim()?' ('+esc(String(s.branch).trim())+')':''}<br>โทร. ${esc(s.phone)}</div></div>
    <div class="badge"><div class="tt">${title}</div><div class="te">WITHHOLDING TAX</div></div></div>
   <div style="text-align:center;font-size:11.5px;font-weight:600;color:#3a4557;margin:8px 0 2px">${subt}</div>
   <div class="parties"><div class="pcard"><div class="pt">ผู้มีหน้าที่หักภาษี ณ ที่จ่าย</div><div class="pn">${esc(s.companyName)}</div><div class="pa">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)}</div></div>
@@ -2047,7 +2102,12 @@ function wht50HTML(data){const s=state.settings;const r=data.r;const sec=data.se
  </div></div>`;}
 
 /* ============ INIT ============ */
-{const _l=load();state=_l||sample();hasUserEdits=!!_l;}   /* ข้อมูลตัวอย่างต้องไม่ถูกดันขึ้นทับคลาวด์ */
+{const _l=load();
+ if(loadCorrupt){                                     /* อ่านข้อมูลเดิมไม่ได้ = เริ่มเปล่า + ห้ามส่งขึ้นคลาวด์จนกว่าจะดึงของจริงลงมา */
+  state=blank();hasUserEdits=false;mustPullFirst=true;
+  try{localStorage.removeItem(SAVEDAT);}catch(e){}
+  setTimeout(()=>{toast('อ่านข้อมูลในเครื่องไม่ได้ — กำลังดึงจากคลาวด์','err');},400);
+ }else{state=_l||sample();hasUserEdits=!!_l;}}   /* ข้อมูลตัวอย่างต้องไม่ถูกดันขึ้นทับคลาวด์ */
 buildNav();render();
 try{sbInit();cloudSyncStart();}catch(e){}
 </script>
