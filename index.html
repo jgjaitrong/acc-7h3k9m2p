@@ -442,9 +442,30 @@ function cloudCfgSave(c){localStorage.setItem(CFG,JSON.stringify(c||{}));}
 function localSavedAt(){return +(localStorage.getItem(SAVEDAT)||0);}
 function sbInit(){const c=cloudCfg();sb=null;if(c.url&&c.key&&window.supabase){try{sb=window.supabase.createClient(c.url,c.key);}catch(e){sb=null;}}updateSbBadge();}
 function sbReady(){return !!(sb&&cloudCfg().code);}
+let sbLastErr='';
+/* แปล error จาก Supabase เป็นภาษาคน + บอกวิธีแก้ — เดิมกลืน error ทิ้ง ผู้ใช้เลยเห็นแค่คำว่า “ผิดพลาด” โดยไม่รู้สาเหตุ */
+function sbErrText(e){
+ if(!e)return'';
+ const msg=String((e&&(e.message||e.msg))||e||'');
+ const code=String((e&&e.code)||'');
+ const st=Number((e&&(e.status||e.statusCode)))||0;
+ const L=msg.toLowerCase();
+ if(code==='PGRST202'||L.includes('could not find the function')||L.includes('schema cache'))
+  return'ยังไม่ได้สร้างฟังก์ชัน vault_load / vault_save ใน Supabase — เปิด Supabase › SQL Editor แล้วรันสคริปต์ติดตั้งใน “คู่มือ-ติดตั้ง” อีกครั้ง';
+ if(code==='42501'||L.includes('permission denied')||L.includes('row-level security')||L.includes('row level security'))
+  return'Supabase ปฏิเสธสิทธิ์ (RLS) — ฟังก์ชันต้องสร้างแบบ SECURITY DEFINER และให้สิทธิ์ GRANT EXECUTE แก่ anon ให้รันสคริปต์ติดตั้งใหม่';
+ if(st===401||st===403||L.includes('invalid api key')||L.includes('no api key')||L.includes('jwt')||L.includes('apikey'))
+  return'Anon Key ไม่ถูกต้อง — คัดลอกคีย์ใหม่จาก Supabase › Settings › API Keys (ระวังเครื่องหมายขีดล่าง _ หายตอนคัดลอก)';
+ if(st===404||L.includes('not found'))
+  return'ไม่พบปลายทาง — ตรวจ Supabase URL ว่าพิมพ์ถูกและลงท้ายด้วย .supabase.co';
+ if(st>=500&&st<600)return'เซิร์ฟเวอร์ Supabase ขัดข้องชั่วคราว ('+st+') — รอสักครู่แล้วลองใหม่';
+ if(L.includes('failed to fetch')||L.includes('networkerror')||L.includes('load failed')||L.includes('network request failed')||L.includes('fetch'))
+  return'ติดต่อเซิร์ฟเวอร์ไม่ได้ — ที่พบบ่อยที่สุดคือโปรเจกต์ Supabase ถูกพักอัตโนมัติ (แพ็กเกจฟรีจะพักเมื่อไม่ได้ใช้ราว 7 วัน) ให้เข้า supabase.com แล้วกด Restore project · หรืออาจเป็นเน็ตหลุด / URL พิมพ์ผิด';
+ return msg||'ไม่ทราบสาเหตุ';
+}
 /* คืนค่า {ok:true,data:...} เมื่ออ่านสำเร็จ (data=null คือยังไม่มีข้อมูล) / {ok:false} เมื่อเชื่อมต่อไม่ได้ — ต้องแยกให้ชัด ไม่งั้นจะเผลอเอาข้อมูลเก่าทับของใหม่บนคลาวด์ */
-async function cloudLoad(){if(!sbReady())return{ok:false,data:null};try{const{data,error}=await sb.rpc('vault_load',{p_code:cloudCfg().code});if(error)throw error;return{ok:true,data:data||null};}catch(e){sbState='err';updateSbBadge();return{ok:false,data:null};}}
-async function cloudSave(){if(!sbReady())return false;if(pullingCloud)return false;sbState='syncing';updateSbBadge();try{const payload={savedAt:localSavedAt()||Date.now(),state:state};const{error}=await sb.rpc('vault_save',{p_code:cloudCfg().code,p_data:payload});if(error)throw error;sbState='ok';updateSbBadge();return true;}catch(e){sbState='err';updateSbBadge();return false;}}
+async function cloudLoad(){if(!sbReady())return{ok:false,data:null};try{const{data,error}=await sb.rpc('vault_load',{p_code:cloudCfg().code});if(error)throw error;sbLastErr='';return{ok:true,data:data||null};}catch(e){sbLastErr=sbErrText(e);sbState='err';updateSbBadge();return{ok:false,data:null};}}
+async function cloudSave(){if(!sbReady())return false;if(pullingCloud)return false;sbState='syncing';updateSbBadge();try{const payload={savedAt:localSavedAt()||Date.now(),state:state};const{error}=await sb.rpc('vault_save',{p_code:cloudCfg().code,p_data:payload});if(error)throw error;sbLastErr='';sbState='ok';updateSbBadge();return true;}catch(e){sbLastErr=sbErrText(e);sbState='err';updateSbBadge();return false;}}
 let cloudT=null;
 let cloudRetry=0;
 function cloudQueue(d){if(!sbReady()||persistBroken||mustPullFirst)return;
@@ -503,8 +524,51 @@ function useCloudData(){if(!_cloudPick)return;const p=_cloudPick;_cloudPick=null
 function useLocalData(){_cloudPick=null;try{localStorage.setItem(SYNCED,cloudCfg().code);}catch(e){}
  mustPullFirst=false;closeModal();localStorage.setItem(SAVEDAT,String(Date.now()));cloudQueue(300);
  toast('ใช้ข้อมูลในเครื่องนี้ และกำลังส่งขึ้นคลาวด์','ok');}
-function updateSbBadge(){const el=document.getElementById('sbBadge');if(!el)return;const c=cloudCfg();if(!(c.url&&c.key)){el.style.display='none';return;}el.style.display='';if(!c.code){el.innerHTML='<span style="color:#c98a00">☁ ตั้งรหัสลับเพื่อซิงค์</span>';return;}const m={off:['#8a94a6','☁ พร้อม'],ok:['#0f8a3c','☁ ซิงค์แล้ว'],syncing:['#c98a00','☁ กำลังซิงค์…'],err:['#c0392b','☁ ผิดพลาด']};const v=m[sbState]||m.off;el.innerHTML=`<span style="color:${v[0]}">${v[1]}</span>`;}
+function updateSbBadge(){const el=document.getElementById('sbBadge');if(!el)return;const c=cloudCfg();if(!(c.url&&c.key)){el.style.display='none';return;}el.style.display='';if(!c.code){el.innerHTML='<span style="color:#c98a00">☁ ตั้งรหัสลับเพื่อซิงค์</span>';return;}const m={off:['#8a94a6','☁ พร้อม'],ok:['#0f8a3c','☁ ซิงค์แล้ว'],syncing:['#c98a00','☁ กำลังซิงค์…'],err:['#c0392b','☁ ผิดพลาด — ดูสาเหตุ']};const v=m[sbState]||m.off;el.innerHTML=`<span style="color:${v[0]}">${v[1]}</span>`;
+ /* กดที่ป้ายตอนผิดพลาด = เปิดหน้าตรวจสาเหตุทันที ไม่ต้องเดา */
+ if(sbState==='err'){el.title=sbLastErr||'กดเพื่อตรวจสอบสาเหตุ';el.onclick=()=>cloudDiag();}
+ else{el.title='สถานะข้อมูลคลาวด์ (คลิกเพื่อตั้งค่า)';el.onclick=()=>gotoCloud();}}
 function gotoCloud(){go('settings');setTimeout(()=>{const e=document.getElementById('cloudCard');if(e)e.scrollIntoView({behavior:'smooth',block:'center'});},80);}
+/* ====== ตรวจสาเหตุที่คลาวด์ผิดพลาด — ตรวจทีละขั้นแล้วบอกตรง ๆ ว่าติดตรงไหนและต้องแก้อะไร ====== */
+function _dgRow(icon,color,title,detail){return `<div style="display:flex;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line)"><div style="flex:0 0 20px;color:${color};font-weight:800;font-size:15px;line-height:1.5">${icon}</div><div style="flex:1;font-size:13px;line-height:1.7"><b>${title}</b>${detail?'<br><span style="color:var(--muted)">'+detail+'</span>':''}</div></div>`;}
+/* คีย์แบบ sb_publishable_... ขีดล่างมักกลายเป็นเว้นวรรคตอนคัดลอก → แปลงกลับเป็นขีดล่าง
+   คีย์แบบ JWT (eyJ...) ไม่มีขีดล่างอยู่แล้ว เว้นวรรคคือขยะจากการตัดบรรทัด → ตัดทิ้ง */
+function normKey(k){k=String(k||'').trim();return /^sb[ _]/i.test(k)?k.replace(/\s+/g,'_'):k.replace(/\s+/g,'');}
+function fixCloudKey(){const c=cloudCfg();const k=normKey(c.key);cloudCfgSave({...c,key:k});sbInit();const el=document.getElementById('cl_key');if(el)el.value=k;closeModal();toast('แก้คีย์แล้ว กำลังลองเชื่อมต่อใหม่','ok');setTimeout(()=>{try{cloudSyncStart();}catch(e){}},250);}
+async function cloudDiag(){
+ const c=cloudCfg();const rows=[];let extra='';
+ const OK=(t,d)=>rows.push(_dgRow('✓','#0f8a3c',t,d||''));
+ const NG=(t,d)=>rows.push(_dgRow('✕','#c0392b',t,d||''));
+ const WN=(t,d)=>rows.push(_dgRow('!','#c98a00',t,d||''));
+ const paint=(busy)=>modal(`<div class="mh"><h3>ตรวจสอบการเชื่อมต่อคลาวด์</h3><button class="x" onclick="closeModal()">✕</button></div>
+  <div class="mb">${rows.join('')}${busy?'<div style="padding:12px 2px;font-size:13px;color:var(--muted)">กำลังตรวจ…</div>':''}${extra}</div>
+  <div class="mf" style="flex-wrap:wrap;gap:8px"><button class="btn btn-g" onclick="closeModal()">ปิด</button>${busy?'':'<button class="btn btn-p" onclick="cloudDiag()">ตรวจอีกครั้ง</button>'}</div>`,true);
+ paint(true);
+ if(!c.url||!c.key||!c.code){NG('ยังตั้งค่าไม่ครบ','ต้องกรอกครบทั้ง Supabase URL, Anon Key และรหัสลับส่วนตัว');paint(false);return;}
+ OK('ตั้งค่าครบทั้ง 3 ช่อง');
+ if(!/^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i.test(c.url))WN('รูปแบบ Supabase URL ไม่ปกติ',esc(c.url)+' — ปกติต้องเป็น https://xxxxxxxx.supabase.co และห้ามมี / ปิดท้าย');
+ else OK('รูปแบบ Supabase URL ถูกต้อง',esc(c.url));
+ if(/\s/.test(c.key)){NG('Anon Key มีเว้นวรรคแทรกอยู่','คีย์จริงต้องไม่มีเว้นวรรคเลย — มักเกิดจากขีดล่าง _ กลายเป็นเว้นวรรคตอนคัดลอก');
+  extra=`<div style="background:#fff8e6;border:1px solid #ffe1a6;border-radius:10px;padding:12px 14px;margin-top:14px;font-size:13px;line-height:1.7;color:#8a6100">พบเว้นวรรคในคีย์ — กดปุ่มนี้เพื่อเปลี่ยนเว้นวรรคทุกตัวเป็นขีดล่าง แล้วลองเชื่อมต่อใหม่<br><button class="btn btn-p btn-sm" style="margin-top:8px" onclick="fixCloudKey()">แก้คีย์ให้อัตโนมัติ</button></div>`;}
+ else OK('รูปแบบ Anon Key ปกติ (ไม่มีเว้นวรรค)','ยาว '+c.key.length+' ตัวอักษร');
+ paint(true);
+ let alive=false;
+ try{const r=await fetch(c.url+'/rest/v1/',{headers:{apikey:c.key}});
+  if(r.status===401||r.status===403)NG('เซิร์ฟเวอร์ตอบกลับ แต่ปฏิเสธคีย์ (HTTP '+r.status+')','Anon Key ไม่ถูกต้อง — คัดลอกใหม่จาก Supabase › Settings › API Keys');
+  else{alive=true;OK('ติดต่อโปรเจกต์ Supabase ได้ (HTTP '+r.status+')','แปลว่าโปรเจกต์ไม่ได้ถูกพัก และเน็ตปกติ');}
+ }catch(e){NG('ติดต่อโปรเจกต์ Supabase ไม่ได้','สาเหตุที่พบบ่อยที่สุดคือโปรเจกต์ถูกพักอัตโนมัติ (แพ็กเกจฟรีจะพักเมื่อไม่ได้ใช้ราว 7 วัน) — เข้า supabase.com เปิดโปรเจกต์ แล้วกด Restore project · หรืออาจเป็นเน็ตหลุด หรือ URL พิมพ์ผิด');}
+ paint(true);
+ if(alive){
+  if(!sb)sbInit();
+  if(!sb)NG('สร้างตัวเชื่อมต่อไม่ได้','โหลดไลบรารี Supabase ไม่สำเร็จ — ลองรีเฟรชหน้าเว็บ');
+  else try{const{data,error}=await sb.rpc('vault_load',{p_code:c.code});
+   if(error)throw error;
+   OK('เรียกฟังก์ชัน vault_load สำเร็จ',(data&&data.state)?('พบข้อมูลบนคลาวด์: '+esc(cnt(data.state))):'เชื่อมต่อได้ แต่รหัสลับนี้ยังไม่เคยบันทึกข้อมูลไว้');
+  }catch(e){NG('เรียกฟังก์ชัน vault_load ไม่สำเร็จ',esc(sbErrText(e)));}
+ }
+ if(sbLastErr)rows.push(_dgRow('i','#2560a8','ข้อความผิดพลาดล่าสุดที่ระบบบันทึกไว้',esc(sbLastErr)));
+ paint(false);
+}
 
 /* ============ GOOGLE SHEET BACKUP (Apps Script Web App) ============ */
 const GSCFG='acct_gs_cfg_v1';
@@ -542,6 +606,20 @@ function jobReceipts(j){var a=(j.payments||[]).slice();(j.installments||[]).forE
 function jobBilled(j){return !!(j.inv&&j.inv.issued)||((j.installments||[]).length>0);}
 function jobRcDone(j){return !!j.rcIssued||(j.installments||[]).some(function(i){return i.rc&&i.rc.issued;});}
 function billDate(j){return (j.inv&&j.inv.date)||((j.installments||[])[0]&&j.installments[0].date)||j.qtDate;}
+/* วันที่รับเงินทั้งหมดของงานนี้ เรียงจากเก่าไปใหม่ */
+function jobRcDates(j){return jobReceipts(j).map(function(r){return r&&r.date;}).filter(Boolean).sort();}
+/* เดือนที่งานนี้ควรไปอยู่ในแถบเลือกเดือน
+   — งานที่รับเงินแล้ว ให้ไปอยู่ “เดือนที่เงินเข้าจริง” (ขึ้นได้หลายเดือนถ้าแบ่งงวดรับคนละเดือน)
+   — งานที่ยังเก็บเงินไม่ครบ ยังคงอยู่ในเดือนของใบเสนอราคาด้วย จะได้ไม่หลุดจากสายตา */
+function jobMonthKeys(j){
+ const ks=new Set();
+ jobRcDates(j).forEach(function(d){ks.add(String(d).slice(0,7));});
+ let paidFull=false;try{paidFull=compute(j).pay==='paid';}catch(e){}
+ const qm=j.qtDate?String(j.qtDate).slice(0,7):'';
+ if(qm&&(!ks.size||!paidFull))ks.add(qm);
+ if(!ks.size){const bd=billDate(j);if(bd)ks.add(String(bd).slice(0,7));}   /* งานที่ไม่มีวันที่ใบเสนอราคา ยังต้องหาเจอในแถบเดือน */
+ return Array.from(ks);
+}
 /* billing events: one row per installment (or the single full invoice) — {date, sub, total} */
 function billEvents(j){const insts=j.installments||[];if(insts.length)return insts.map(function(i){var s=instBase(j,i);return {date:i.date,sub:s,total:instTot(j,i)};});if(j.inv&&j.inv.issued){var c=compute(j);return [{date:j.inv.date,sub:c.sub,total:c.total}];}return [];}
 function compute(j){
@@ -665,7 +743,7 @@ function viewDash(){
    <div class="card chart-card"><div class="sec-t">ยอดออกใบแจ้งหนี้ 6 เดือนล่าสุด <span style="font-weight:400;color:var(--muted);font-size:12px">(บาท)</span></div><div class="bars">${bars}</div></div>
    <div class="card chart-card"><div class="sec-t">สถานะการชำระเงิน</div>
      <div class="segbar">${seg(paidN,'#0ca30c')}${seg(partN,'#fab219')}${seg(pendN,'#d03b3b')}</div>
-     <div class="legend"><span><i style="background:#0ca30c"></i>ชำระครบ ${paidN}</span><span><i style="background:#fab219"></i>ชำระบางส่วน ${partN}</span><span><i style="background:#d03b3b"></i>รอชำระ ${pendN}</span></div>
+     <div class="legend"><span><i style="background:#0ca30c"></i>ชำระแล้ว ${paidN}</span><span><i style="background:#fab219"></i>ชำระบางส่วน ${partN}</span><span><i style="background:#d03b3b"></i>รอชำระ ${pendN}</span></div>
      <div style="margin-top:18px;font-size:12.5px;color:var(--ink-2)">อัตราการเก็บเงิน (รวมทุกงาน)<div style="font-size:26px;font-weight:700;color:var(--brand-d);margin-top:2px">${billedAll?Math.round(receivedAll/billedAll*100):0}%</div></div>
    </div>
  </div>`;
@@ -1006,7 +1084,7 @@ function jobMatch(j,q){if(!q)return true;q=q.trim().toLowerCase();if(!q)return f
 let docSort={k:'no',dir:1};
 function setDocSort(k){if(docSort.k===k)docSort.dir*=-1;else{docSort.k=k;docSort.dir=(k==='date'||k==='total')?-1:1;}viewDocs();}
 const DTYPES=[['QT','ใบเสนอราคา'],['INV','ใบวางบิล / ใบแจ้งหนี้'],['RC','ใบเสร็จ/ใบกำกับภาษี']];
-function docMonthList(){const s={};state.jobs.forEach(j=>{if(j.qtDate){const k=j.qtDate.slice(0,7);s[k]=(s[k]||0)+1;}});return Object.keys(s).sort().reverse().map(k=>({k,n:s[k],label:(MNS[parseInt(k.slice(5,7))-1]||'')+' '+k.slice(0,4)}));}
+function docMonthList(){const s={};state.jobs.forEach(j=>{jobMonthKeys(j).forEach(k=>{s[k]=(s[k]||0)+1;});});return Object.keys(s).sort().reverse().map(k=>({k,n:s[k],label:(MNS[parseInt(k.slice(5,7))-1]||'')+' '+k.slice(0,4)}));}
 function docTypeAvail(j,t){return t==='QT'?true:t==='INV'?jobBilled(j):jobRcDone(j);}
 function docNumOf(j,t,instNo){if(t==='QT')return j.id;const base=/^[A-Za-z]+/.test(j.id)?j.id.replace(/^[A-Za-z]+/,t):t+j.id;return (instNo!=null&&instNo!=='')?base+'/'+instNo:base;}
 function setDocType(t){docType=t;docSel.clear();viewDocs();}
@@ -1032,7 +1110,7 @@ function printSelDocs(){const ids=docVis.filter(id=>docSel.has(id));if(!ids.leng
  printMany(list);}
 function exportDocsExcel(){try{const wb=XLSX.utils.book_new();const H=['เลขที่เอกสาร','วันที่','ลูกค้า','โครงการ','ยอดก่อน VAT','VAT','ยอดรวม'];const C=[{wch:20},{wch:12},{wch:28},{wch:26},{wch:13},{wch:11},{wch:13}];
  const qt=[H.slice()];state.jobs.forEach(j=>{const c=compute(j);qt.push([j.id,j.qtDate,cust(j.customerCode)?.name||'',j.project||'',c.sub,c.vat,c.total]);});
- const inv=[H.concat(['สถานะชำระ'])];state.jobs.filter(j=>jobBilled(j)).forEach(j=>{const c=compute(j);inv.push([docNumOf(j,'INV'),billDate(j),cust(j.customerCode)?.name||'',j.project||'',c.sub,c.vat,c.total,c.pay==='paid'?'ชำระครบ':c.pay==='partial'?'บางส่วน':'รอชำระ']);});
+ const inv=[H.concat(['สถานะชำระ'])];state.jobs.filter(j=>jobBilled(j)).forEach(j=>{const c=compute(j);inv.push([docNumOf(j,'INV'),billDate(j),cust(j.customerCode)?.name||'',j.project||'',c.sub,c.vat,c.total,c.pay==='paid'?'ชำระแล้ว':c.pay==='partial'?'บางส่วน':'รอชำระ']);});
  const rc=[H.concat(['วิธีชำระ'])];state.jobs.filter(j=>jobRcDone(j)).forEach(j=>{const c=compute(j);const rcs=jobReceipts(j);const last=rcs[rcs.length-1];rc.push([docNumOf(j,'RC'),(last&&last.date)||billDate(j),cust(j.customerCode)?.name||'',j.project||'',c.sub,c.vat,c.total,(last&&last.method)||'']);});
  const mk=(a,cols)=>{const ws=XLSX.utils.aoa_to_sheet(a);ws['!cols']=cols;return ws;};
  XLSX.utils.book_append_sheet(wb,mk(qt,C),'ใบเสนอราคา');XLSX.utils.book_append_sheet(wb,mk(inv,C.concat([{wch:12}])),'ใบวางบิล');XLSX.utils.book_append_sheet(wb,mk(rc,C.concat([{wch:12}])),'ใบเสร็จรับเงิน');
@@ -1045,20 +1123,20 @@ function exportSelDocLayout(){
   ids.forEach(id=>{
    const j=state.jobs.find(x=>x.id===id);if(!j)return;const c=compute(j);const cu=cust(j.customerCode)||{};const hasVat=(j.vat!==false);
    const rcs=jobReceipts(j);const last=rcs[rcs.length-1];
-   const cfg={QT:{th:'ใบเสนอราคา',en:'QUOTATION',m:'ยืนราคาถึงวันที่',mv:dTH(addDays(j.qtDate,s.validDays)),date:j.qtDate},
-     INV:{th:'ใบแจ้งหนี้ / ใบวางบิล',en:'INVOICE',m:'ครบกำหนดชำระ',mv:dTH(c.due),date:billDate(j)},
+   const cfg={QT:{th:'ใบเสนอราคา',en:'QUOTATION',m:'',mv:'',date:j.qtDate},
+     INV:{th:'ใบแจ้งหนี้ / ใบวางบิล',en:'INVOICE',m:'',mv:'',date:billDate(j)},
      RC:{th:hasVat?'ใบเสร็จรับเงิน / ใบกำกับภาษี':'ใบเสร็จรับเงิน',en:hasVat?'RECEIPT / TAX INVOICE':'RECEIPT',m:'วิธีชำระเงิน',mv:(last?last.method:'-'),date:(last?last.date:billDate(j))}}[t];
    const docNo=docNumOf(j,t);const A=[];const M=[];
    const push=(row)=>{A.push(row||[]);return A.length-1;};const full=(r)=>M.push({s:{r:r,c:0},e:{r:r,c:5}});
    let r;
    r=push([s.companyName||'']);full(r);
    r=push([((s.addr1||'')+' '+(s.addr2||'')).trim()]);full(r);
-   r=push(['เลขประจำตัวผู้เสียภาษี '+(s.taxId||'')+' ('+(s.branch||'')+')']);full(r);
+   r=push(['เลขประจำตัวผู้เสียภาษี '+(s.taxId||'')+(String(s.branch||'').trim()?' ('+String(s.branch).trim()+')':'')]);full(r);
    r=push(['โทร. '+(s.phone||'')+(s.email?'   '+s.email:'')]);full(r);
    push([]);
    r=push(['ประเภทเอกสาร:  '+cfg.th+' ('+cfg.en+')','','','','เลขที่เอกสาร',docNo]);M.push({s:{r:r,c:0},e:{r:r,c:3}});
    push(['','','','','วันที่',dTH(cfg.date)]);
-   push(['','','','',cfg.m,cfg.mv]);
+   if(cfg.m)push(['','','','',cfg.m,cfg.mv]);
    push([]);
    r=push(['ลูกค้า / ผู้ซื้อ:  '+(cu.name||'')]);full(r);
    r=push(['      '+(cu.address||'')]);full(r);
@@ -1087,7 +1165,8 @@ function exportSelDocLayout(){
 }
 
 function viewDocs(){
- const base=state.jobs.filter(j=>docMonth==='all'||(j.qtDate&&j.qtDate.slice(0,7)===docMonth));
+ if(docFilter==='overdue')docFilter='all';   /* เลิกใช้แถบ “เกินกำหนด” แล้ว — ถ้าค่าเก่าค้างอยู่ให้กลับไปทั้งหมด */
+ const base=state.jobs.filter(j=>docMonth==='all'||jobMonthKeys(j).indexOf(docMonth)>=0);
  const counts={all:base.length,qt:0,inv:0,pending:0,overdue:0,paid:0,hold:0};
  base.forEach(j=>{const c=compute(j);const h=isHold(j);
   if(h)counts.hold++;
@@ -1100,7 +1179,8 @@ function viewDocs(){
  const mchip=(k,l,n)=>`<button class="chip-f ${docMonth===k?'on':''}" onclick="docMonth='${k}';viewDocs()">${l}${n!=null?`<span class="c">${n}</span>`:''}</button>`;
  const months=docMonthList();
  let html=`<div class="chips">${mchip('all','ทุกเดือน',state.jobs.length)}${months.map(m=>mchip(m.k,m.label,m.n)).join('')}</div>`;
- html+=`<div class="chips">${chip('all','ทั้งหมด')}${chip('qt','ยังไม่วางบิล')}${chip('inv','วางบิลแล้ว')}${chip('pending','รอชำระ')}${chip('overdue','เกินกำหนด')}${chip('paid','ชำระครบ')}${counts.hold?chip('hold','พักไว้ (HOLD)'):''}</div>`;
+ html+=`<div class="hint" style="margin:-4px 0 10px;font-size:12px">เดือนยึดตาม<b>วันที่รับเงินจริง</b>สำหรับงานที่ชำระแล้ว (แบ่งงวดรับคนละเดือนจะขึ้นทั้งสองเดือน) · งานที่ยังเก็บเงินไม่ครบ ใช้วันที่ใบเสนอราคา</div>`;
+ html+=`<div class="chips">${chip('all','ทั้งหมด')}${chip('qt','ยังไม่วางบิล')}${chip('inv','วางบิลแล้ว')}${chip('pending','รอชำระ')}${chip('paid','ชำระแล้ว')}${counts.hold?chip('hold','พักไว้ (HOLD)'):''}</div>`;
  html+=`<div class="card" style="padding:10px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
    <span style="font-size:13px;font-weight:700;color:var(--ink-2);white-space:nowrap">🔎 ค้นหา:</span>
    ${docCust?(()=>{const cu=cust(docCust)||{code:docCust,name:''};return `<span class="custchip"><b>${esc(cu.code)}</b> ${esc(cu.name||'')}<button title="ล้างการเลือกลูกค้า" onclick="clearDocCust()">✕</button></span>`;})():''}
@@ -1143,14 +1223,17 @@ function viewDocs(){
  const dth=(k,l,cls)=>sortTh(docSort.k,k,docSort.dir,l,'setDocSort',cls);
  html+=`<div class="card tbl-wrap"><table class="tbl"><thead><tr><th style="width:34px"><input type="checkbox" ${allSel?'checked':''} onclick="docSelAll(this.checked)"></th>${dth('no','เลขที่เอกสาร')}${dth('cust','ลูกค้า')}${dth('date','วันที่')}${dth('total','ยอดรวม','num')}<th>เอกสาร</th><th>สถานะชำระ</th><th style="text-align:right">การทำงาน</th></tr></thead><tbody>`;
  rows.forEach(({j,c})=>{
-  const payPill=isHold(j)?'<span class="pill" style="background:#fff4d6;color:#8a6100;border:1px solid #ffd98a"><span class="dot" style="background:#c98a00"></span>พักไว้ (HOLD)</span>':c.pay==='paid'?'<span class="pill good"><span class="dot"></span>ชำระครบ</span>':c.pay==='partial'?'<span class="pill warn"><span class="dot"></span>ชำระบางส่วน</span>':c.pay==='pending'?(c.overdue>0?`<span class="pill crit"><span class="dot"></span>เกิน ${c.overdue} วัน</span>`:'<span class="pill warn"><span class="dot"></span>รอชำระ</span>'):'<span class="pill mute"><span class="dot"></span>ยังไม่วางบิล</span>';
+  const payPill=isHold(j)?'<span class="pill" style="background:#fff4d6;color:#8a6100;border:1px solid #ffd98a"><span class="dot" style="background:#c98a00"></span>พักไว้ (HOLD)</span>':c.pay==='paid'?'<span class="pill good"><span class="dot"></span>ชำระแล้ว</span>':c.pay==='partial'?'<span class="pill warn"><span class="dot"></span>ชำระบางส่วน</span>':c.pay==='pending'?(c.overdue>0?`<span class="pill crit"><span class="dot"></span>เกิน ${c.overdue} วัน</span>`:'<span class="pill warn"><span class="dot"></span>รอชำระ</span>'):'<span class="pill mute"><span class="dot"></span>ยังไม่วางบิล</span>';
   const docTags=`<span class="tag qt">QT</span> <span class="tag ${jobBilled(j)?'inv':'off'}">${j.installments&&j.installments.length?'บิลงวด':'INV'}</span> <span class="tag ${jobRcDone(j)?'rc':'off'}">RC</span>`;
   const isSel=docSel.has(j.id);const sel=isSel?'checked':'';
   const insts=j.installments||[];const isInst=insts.length>0&&docType!=='QT';
   /* งานที่แบ่งงวด ต้องพิมพ์รายงวด ไม่ใช่ยอดเต็มทั้งงาน */
   const amtCell=isInst?`<span title="ยอดเต็มทั้งงาน ${B(c.total)}">${B(c.billedAmt)}<div style="font-size:11px;color:var(--muted);font-weight:500">แบ่ง ${insts.length} งวด</div></span>`:B(c.total);
   const printBtn=isInst?`<button class="btn btn-g btn-sm" title="เลือกงวดที่จะพิมพ์" onclick="pickInstPrint('${j.id}','${docType}')">${I.print}พิมพ์รายงวด</button>`:`<button class="btn btn-g btn-sm" title="พิมพ์เอกสารนี้" onclick="printDoc('${j.id}','${docType}')">${I.print}พิมพ์</button>`;
-  html+=`<tr style="cursor:pointer${isSel?';background:var(--brand-100)':''}" onclick="openJob('${j.id}')"><td onclick="event.stopPropagation()"><input type="checkbox" ${sel} onclick="toggleDocSel('${j.id}',this.checked)"></td><td class="jobid">${docNumOf(j,docType)}</td><td>${esc(cust(j.customerCode)?.name||'—')}</td><td class="mono">${dTH(j.qtDate)}</td><td class="num" style="font-weight:600">${amtCell}</td><td>${docTags}</td><td>${payPill}</td><td style="text-align:right;white-space:nowrap" onclick="event.stopPropagation()">${printBtn} <button class="btn btn-g btn-sm" onclick="openJob('${j.id}')">${I.arrow}เปิด</button></td></tr>`;
+  /* บอกวันที่เงินเข้าจริง จะได้รู้ว่าได้รับเงินวันไหน เดือนไหน */
+  const _rd=jobRcDates(j);
+  const rcNote=_rd.length?`<div style="font-size:11px;color:var(--muted);font-weight:500;margin-top:3px" title="วันที่รับเงินทั้งหมด: ${esc(_rd.map(dTH).join(', '))}">รับเงิน ${_rd.slice(0,3).map(dTH).join(', ')}${_rd.length>3?' +'+(_rd.length-3):''}</div>`:'';
+  html+=`<tr style="cursor:pointer${isSel?';background:var(--brand-100)':''}" onclick="openJob('${j.id}')"><td onclick="event.stopPropagation()"><input type="checkbox" ${sel} onclick="toggleDocSel('${j.id}',this.checked)"></td><td class="jobid">${docNumOf(j,docType)}</td><td>${esc(cust(j.customerCode)?.name||'—')}</td><td class="mono">${dTH(j.qtDate)}</td><td class="num" style="font-weight:600">${amtCell}</td><td>${docTags}</td><td>${payPill}${rcNote}</td><td style="text-align:right;white-space:nowrap" onclick="event.stopPropagation()">${printBtn} <button class="btn btn-g btn-sm" onclick="openJob('${j.id}')">${I.arrow}เปิด</button></td></tr>`;
  });
  html+=`</tbody></table></div>`;
  document.getElementById('view').innerHTML=html;
@@ -1189,7 +1272,7 @@ function openCustDocs(code){const cu=cust(code)||{code:code,name:code};
    if(insts.length){const paidN=insts.filter(i=>i.rc&&i.rc.issued).length;billCol=`<b>แบ่ง ${insts.length} งวด</b>`;rcCol=`<span class="tag ${paidN>0?'rc':'off'}">ใบเสร็จ ${paidN}/${insts.length}</span>`;}
    else if(j.inv&&j.inv.issued){billCol='เต็มจำนวน';rcCol=`<span class="tag ${j.rcIssued?'rc':'off'}">${j.rcIssued?'ออกใบเสร็จแล้ว':'ยังไม่ออกใบเสร็จ'}</span>`;}
    else{billCol=isHold(j)?'<span style="color:#8a6100;font-weight:600">⏸ พักไว้ (HOLD)</span>':'<span style="color:var(--muted)">— ยังไม่วางบิล</span>';rcCol=`<span class="tag off">ยังไม่มีใบเสร็จ</span>`;}
-   const payPill=c.pay==='paid'?'<span class="pill good"><span class="dot"></span>ชำระครบ</span>':c.pay==='partial'?'<span class="pill warn"><span class="dot"></span>ชำระบางส่วน</span>':c.pay==='pending'?(c.overdue>0?`<span class="pill crit"><span class="dot"></span>เกิน ${c.overdue} วัน</span>`:'<span class="pill warn"><span class="dot"></span>รอชำระ</span>'):'<span class="pill mute"><span class="dot"></span>เสนอราคา</span>';
+   const payPill=c.pay==='paid'?'<span class="pill good"><span class="dot"></span>ชำระแล้ว</span>':c.pay==='partial'?'<span class="pill warn"><span class="dot"></span>ชำระบางส่วน</span>':c.pay==='pending'?(c.overdue>0?`<span class="pill crit"><span class="dot"></span>เกิน ${c.overdue} วัน</span>`:'<span class="pill warn"><span class="dot"></span>รอชำระ</span>'):'<span class="pill mute"><span class="dot"></span>เสนอราคา</span>';
    return `<tr style="cursor:pointer" onclick="closeModal();openJob('${j.id}')"><td class="jobid">${j.id}</td><td class="mono">${dTH(j.qtDate)}</td><td class="num" style="font-weight:600">${B(c.total)}</td><td>${billCol}</td><td>${rcCol}</td><td class="num" style="color:${c.bal>0.005&&jobBilled(j)?'var(--crit)':'inherit'}">${jobBilled(j)?B(Math.max(0,c.bal)):'-'}</td><td>${payPill}</td></tr>`;
   }).join('');
   body=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
@@ -1274,7 +1357,9 @@ function cloudCardsHTML(){
     <button class="btn btn-p" type="button" onclick="saveCloudCfg()">${I.check}บันทึก & เชื่อมต่อ</button>
     <button class="btn btn-g" type="button" onclick="cloudPullNow()">${I.down}ดึงจากคลาวด์</button>
     <button class="btn btn-g" type="button" onclick="cloudPushNow()">${I.up}ส่งขึ้นคลาวด์</button>
+    <button class="btn btn-g" type="button" onclick="cloudDiag()">🩺 ตรวจสอบปัญหา</button>
    </div>
+   ${sbState==='err'?`<div style="background:#fdecea;border:1px solid #f5c4bf;border-radius:10px;padding:12px 14px;margin-top:12px;font-size:13px;line-height:1.7;color:#a0302a"><b>ตอนนี้ซิงค์ไม่สำเร็จ</b><br>${esc(sbLastErr||'ยังไม่ทราบสาเหตุ — กด “ตรวจสอบปัญหา” เพื่อตรวจทีละขั้น')}<br><span style="color:#8a6100">ข้อมูลในเครื่องนี้ยังอยู่ครบและยังใช้งานได้ตามปกติ</span></div>`:''}
   </div>
   <div class="card" style="padding:22px">
    <div class="sec-t">📗 สำรองขึ้น Google Sheet</div>
@@ -1291,14 +1376,20 @@ function cloudCardsHTML(){
  </div>`;
 }
 function genCode(){const a='abcdefghijkmnpqrstuvwxyz23456789';let s='';for(let i=0;i<16;i++){s+=a[Math.floor(Math.random()*a.length)];if(i%4===3&&i<15)s+='-';}const el=document.getElementById('cl_code');if(el)el.value=s;}
-function saveCloudCfg(){const url=(document.getElementById('cl_url').value||'').trim().replace(/\/+$/,'');const key=(document.getElementById('cl_key').value||'').trim();const code=(document.getElementById('cl_code').value||'').trim();cloudCfgSave({url,key,code});sbInit();if(url&&key&&code){cloudSyncStart();toast('เชื่อมต่อคลาวด์แล้ว','ok');}else toast('บันทึกค่าคลาวด์แล้ว','ok');}
+/* เดิมเด้ง “เชื่อมต่อคลาวด์แล้ว” ทุกครั้งแม้ต่อไม่ติด — ต้องรอผลจริงก่อนแล้วค่อยบอก */
+async function saveCloudCfg(){const url=(document.getElementById('cl_url').value||'').trim().replace(/\/+$/,'');const key=normKey(document.getElementById('cl_key').value);const code=(document.getElementById('cl_code').value||'').trim();cloudCfgSave({url,key,code});sbInit();
+ const ke=document.getElementById('cl_key');if(ke)ke.value=key;
+ if(!(url&&key&&code)){toast('บันทึกค่าแล้ว — ยังกรอกไม่ครบจึงยังไม่ซิงค์','err');return;}
+ try{await cloudSyncStart();}catch(e){}
+ if(sbState==='err'){toast('เชื่อมต่อคลาวด์ไม่สำเร็จ — กด “ตรวจสอบปัญหา”','err');try{render();}catch(e){}}
+ else toast('เชื่อมต่อคลาวด์แล้ว','ok');}
 async function cloudPullNow(){if(!sbReady()){toast('ยังไม่ได้ตั้งค่าคลาวด์ให้ครบ','err');return;}
  pullingCloud=true;let res;try{res=await cloudLoad();}finally{pullingCloud=false;}
- if(!res.ok){toast('เชื่อมต่อคลาวด์ไม่สำเร็จ — ยังไม่ได้แตะข้อมูลในเครื่อง','err');return;}
+ if(!res.ok){toast('ดึงไม่สำเร็จ: '+(sbLastErr||'เชื่อมต่อคลาวด์ไม่ได้')+' (ข้อมูลในเครื่องยังอยู่ครบ)','err');try{render();}catch(e){}return;}
  const cloud=res.data;
  if(cloud&&cloud.state)adoptCloud(cloud.state,cloud.savedAt,'ดึงข้อมูลจากคลาวด์แล้ว');
  else toast('ยังไม่มีข้อมูลในคลาวด์ (รหัสลับนี้ยังไม่เคยบันทึก)','err');}
-async function cloudPushNow(){if(!sbReady()){toast('ยังไม่ได้ตั้งค่าคลาวด์ให้ครบ','err');return;}mustPullFirst=false;try{localStorage.setItem(SAVEDAT,String(Date.now()));}catch(e){}try{localStorage.setItem(SYNCED,cloudCfg().code);}catch(e){}const ok=await cloudSave();toast(ok?'ส่งข้อมูลขึ้นคลาวด์แล้ว':'ส่งขึ้นคลาวด์ไม่สำเร็จ',ok?'ok':'err');}
+async function cloudPushNow(){if(!sbReady()){toast('ยังไม่ได้ตั้งค่าคลาวด์ให้ครบ','err');return;}mustPullFirst=false;try{localStorage.setItem(SAVEDAT,String(Date.now()));}catch(e){}try{localStorage.setItem(SYNCED,cloudCfg().code);}catch(e){}const ok=await cloudSave();toast(ok?'ส่งข้อมูลขึ้นคลาวด์แล้ว':('ส่งไม่สำเร็จ: '+(sbLastErr||'เชื่อมต่อคลาวด์ไม่ได้')),ok?'ok':'err');if(!ok){try{render();}catch(e){}}}
 function saveGsCfg(){const url=(document.getElementById('gs_url').value||'').trim();const auto=document.getElementById('gs_auto').checked;const c=gsCfg();gsCfgSave({...c,url,auto});toast('บันทึกลิงก์ Google Sheet แล้ว','ok');}
 function pickLogo(inp){const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{const img=new Image();img.onload=()=>{try{const MAX=320;let w=img.width||1,h=img.height||1;const sc=Math.min(1,MAX/Math.max(w,h));w=Math.max(1,Math.round(w*sc));h=Math.max(1,Math.round(h*sc));const cv=document.createElement('canvas');cv.width=w;cv.height=h;const cx=cv.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,w,h);cx.drawImage(img,0,0,w,h);let out=cv.toDataURL('image/png');if(out.length>160000)out=cv.toDataURL('image/jpeg',0.85);state.settings.logo=out;}catch(err){state.settings.logo=e.target.result;}const p=document.getElementById('logoPrev');if(p){p.src=state.settings.logo;p.style.display='';}if(save())toast('อัปโหลดโลโก้แล้ว','ok');};img.onerror=()=>toast('ไฟล์รูปนี้อ่านไม่ได้','err');img.src=e.target.result;};r.readAsDataURL(f);}
 function saveSettings(){const g=k=>document.getElementById('s_'+k).value;['companyName','addr1','addr2','taxId','branch','phone','email','website','bank','accName','accNo','bankBranch','footer','signName','signTitle'].forEach(k=>{const el=document.getElementById('s_'+k);if(el)state.settings[k]=el.value;});state.settings.vatRate=(parseFloat(document.getElementById('s_vat').value)||0)/100;state.settings.creditDays=parseInt(document.getElementById('s_credit').value)||0;state.settings.validDays=parseInt(document.getElementById('s_valid').value)||0;const ds=document.getElementById('s_docstyle');if(ds)state.settings.docStyle=ds.value;save();render();toast('บันทึกการตั้งค่าแล้ว','ok');}
@@ -1391,7 +1482,7 @@ function saveQT(id){const items=draftItems.filter(i=>i.desc.trim()||Number(i.pri
 /* ----- job detail ----- */
 function openJob(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);const cu=cust(j.customerCode);
  const hasInv=j.inv&&j.inv.issued;const insts=j.installments||[];const hasInst=insts.length>0;
- const payPill=c.pay==='paid'?'<span class="pill good"><span class="dot"></span>ชำระครบ</span>':c.pay==='partial'?'<span class="pill warn"><span class="dot"></span>ชำระบางส่วน</span>':c.pay==='pending'?(c.overdue>0?`<span class="pill crit"><span class="dot"></span>เกินกำหนด ${c.overdue} วัน</span>`:'<span class="pill warn"><span class="dot"></span>รอชำระ</span>'):'<span class="pill mute"><span class="dot"></span>ยังไม่วางบิล</span>';
+ const payPill=c.pay==='paid'?'<span class="pill good"><span class="dot"></span>ชำระแล้ว</span>':c.pay==='partial'?'<span class="pill warn"><span class="dot"></span>ชำระบางส่วน</span>':c.pay==='pending'?(c.overdue>0?`<span class="pill crit"><span class="dot"></span>เกินกำหนด ${c.overdue} วัน</span>`:'<span class="pill warn"><span class="dot"></span>รอชำระ</span>'):'<span class="pill mute"><span class="dot"></span>ยังไม่วางบิล</span>';
  const itemRows=j.items.map((it,n)=>`<tr><td class="c">${n+1}</td><td>${esc(it.desc)}</td><td class="c">${B0(it.qty)}</td><td class="c">${esc(it.unit)}</td><td class="num">${B(it.price)}</td><td class="num">${B(it.qty*it.price)}</td></tr>`).join('');
  /* installment history */
  let instSec='';
@@ -1642,8 +1733,8 @@ function docHTML(id,type,opt){opt=opt||{};const j=state.jobs.find(x=>x.id===id);
  const rcDate=(instObj&&instObj.rc)?instObj.rc.date:(lastPay?.date||todayISO());
  const invDate=instObj?instObj.date:((j.inv&&j.inv.date)?j.inv.date:todayISO());
  const invDue=instObj?dTH(addDays(instObj.date,(instObj.creditDays!=null?instObj.creditDays:s.creditDays))):dTH(c.due);
- const cfg={QT:{th:'ใบเสนอราคา',en:'QUOTATION',m:'ยืนราคาถึงวันที่',mv:dTH(addDays(j.qtDate,s.validDays)),date:j.qtDate,sigL:'ผู้เสนอราคา',sigR:'ผู้อนุมัติ / ลูกค้า'},
-  INV:{th:'ใบแจ้งหนี้ / ใบวางบิล',en:'INVOICE',m:'ครบกำหนดชำระ',mv:invDue,date:invDate,sigL:'ผู้วางบิล / ผู้มีอำนาจลงนาม',sigR:'ผู้รับวางบิล (ลูกค้า)',bank:true},
+ const cfg={QT:{th:'ใบเสนอราคา',en:'QUOTATION',m:'',mv:'',date:j.qtDate,sigL:'ผู้เสนอราคา',sigR:'ผู้อนุมัติ / ลูกค้า'},
+  INV:{th:'ใบแจ้งหนี้ / ใบวางบิล',en:'INVOICE',m:'',mv:'',date:invDate,sigL:'ผู้วางบิล / ผู้มีอำนาจลงนาม',sigR:'ผู้รับวางบิล (ลูกค้า)',bank:true},
   RC:{th:hasVat?'ใบเสร็จรับเงิน / ใบกำกับภาษี':'ใบเสร็จรับเงิน',en:hasVat?'RECEIPT / TAX INVOICE':'RECEIPT',m:'วิธีชำระเงิน',mv:rcMethod,date:rcDate,sigL:'ผู้รับเงิน',sigR:'ผู้มีอำนาจลงนาม',receipt:true,bank:true}}[type];
  const docNo=docNumOf(j,type,instObj?instObj.no:null);
  const rows=j.items.map((it,n)=>{const full=(Number(it.qty)||0)*(Number(it.price)||0);return `<tr><td class="c">${n+1}</td><td>${esc(it.desc)}</td><td class="c">${B0(it.qty)}</td><td class="c">${esc(it.unit)}</td><td class="n">${B(it.price)}</td><td class="n">${B(full)}</td></tr>`;}).join('')+Array.from({length:Math.max(0,(inst?4:5)-j.items.length)}).map(()=>`<tr><td class="c">&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>`).join('');
@@ -1667,7 +1758,7 @@ function docHTML(id,type,opt){opt=opt||{};const j=state.jobs.find(x=>x.id===id);
   <div class="dh"><div>${logo}<div class="co-n">${esc(s.companyName)}</div><div class="co-i">${esc(s.addr1)} ${esc(s.addr2)}<br>เลขประจำตัวผู้เสียภาษี ${esc(s.taxId)}${s.branch&&String(s.branch).trim()?' ('+esc(String(s.branch).trim())+')':''}<br>โทร. ${esc(s.phone)}${s.email?'&nbsp;&nbsp;&nbsp;'+esc(s.email):''}${s.website?'&nbsp;&nbsp;&nbsp;'+esc(s.website):''}</div></div>
    <div class="badge"><div class="tt">${cfg.th}</div><div class="te">${cfg.en}</div></div></div>
   <div class="parties"><div class="pcard"><div class="pt">ลูกค้า / ผู้ซื้อ (BILL TO)</div><div class="pn">${esc(cu.name||'')}</div><div class="pa">${esc(cu.address||'')}<br>เลขประจำตัวผู้เสียภาษี ${esc(cu.taxId||'-')}${(cu.phone||cu.contact)?'<br>โทร. '+esc(cu.phone||'-')+(cu.contact?' · ผู้ติดต่อ '+esc(cu.contact):''):''}</div></div>
-   <div class="pcard meta"><div class="kv"><span>เลขที่เอกสาร</span><b>${docNo}</b></div><div class="kv"><span>วันที่</span><b>${dTH(cfg.date)}</b></div><div class="kv"><span>${cfg.m}</span><b>${cfg.mv}</b></div>${inst?`<div class="kv"><span>งวดที่</span><b>${inst.no||''}</b></div>`:''}</div></div>
+   <div class="pcard meta"><div class="kv"><span>เลขที่เอกสาร</span><b>${docNo}</b></div><div class="kv"><span>วันที่</span><b>${dTH(cfg.date)}</b></div>${cfg.m?`<div class="kv"><span>${cfg.m}</span><b>${cfg.mv}</b></div>`:''}${inst?`<div class="kv"><span>งวดที่</span><b>${inst.no||''}</b></div>`:''}</div></div>
   ${j.project?`<div class="projbar"><span class="pl">โครงการ</span><span class="pv">${esc(j.project)}</span></div>`:''}
   <table class="it"><thead><tr><th class="c">ลำดับ</th><th>รายละเอียด</th><th class="c">จำนวน</th><th class="c">หน่วย</th><th class="n">ราคา/หน่วย</th><th class="n">จำนวนเงิน</th></tr></thead><tbody>${rows}</tbody></table>
   <div class="btm"><div class="lft"><div class="baht">(ตัวอักษร) ${bahttext(shownTotal)}</div>${bankBlock}${rcNote}${notesHtml}</div>
