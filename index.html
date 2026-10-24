@@ -111,6 +111,11 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--
 .modal{background:var(--surface);border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.28);width:100%;max-width:620px;animation:pop .18s ease}
 .modal.wide{max-width:860px}
 @keyframes pop{from{transform:translateY(14px) scale(.98);opacity:0}to{transform:none;opacity:1}}
+/* คลิกนอกกล่องหรือกด Esc จะไม่ปิดหน้าต่างแล้ว — ขยับเตือนให้ไปกดปุ่ม ✕ แทน จะได้ไม่เผลอทำข้อมูลที่กรอกค้างไว้หาย */
+@keyframes nudge{0%,100%{transform:translateX(0)}15%{transform:translateX(-7px)}30%{transform:translateX(7px)}45%{transform:translateX(-5px)}60%{transform:translateX(5px)}80%{transform:translateX(-2px)}}
+.modal.nudge{animation:nudge .34s ease}
+@keyframes xpulse{0%,100%{transform:scale(1);background:transparent}35%{transform:scale(1.22);background:#ffe3e0}}
+.x.xpulse{animation:xpulse .62s ease 2;color:var(--crit)}
 .modal .mh{padding:20px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
 .modal .mh h3{font-size:17px;font-weight:700;font-family:'Prompt',var(--sans)}
 .modal .mb{padding:22px 24px;max-height:66vh;overflow-y:auto}
@@ -1397,8 +1402,19 @@ function saveSettings(){const g=k=>document.getElementById('s_'+k).value;['compa
 /* ============ MODALS ============ */
 function closeModal(){document.getElementById('overlay').classList.remove('show');document.getElementById('overlay').innerHTML='';}
 function modal(html,wide){document.getElementById('overlay').innerHTML=`<div class="modal ${wide?'wide':''}">${html}</div>`;document.getElementById('overlay').classList.add('show');}
-document.getElementById('overlay').addEventListener('click',e=>{if(e.target.id==='overlay')closeModal();});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+/* ปิดหน้าต่างได้ทางปุ่ม ✕ (หรือปุ่มยกเลิก/ปิดในหน้าต่าง) เท่านั้น
+   คลิกพื้นหลังหรือกด Esc จะไม่ปิด เพื่อไม่ให้ข้อมูลที่กำลังกรอกหายกลางคัน */
+function nudgeModal(){const o=document.getElementById('overlay');if(!o||!o.classList.contains('show'))return false;
+ const m=o.querySelector('.modal');if(!m)return false;
+ m.classList.remove('nudge');void m.offsetWidth;m.classList.add('nudge');
+ const x=m.querySelector('.x');if(x){x.classList.remove('xpulse');void x.offsetWidth;x.classList.add('xpulse');
+  setTimeout(()=>{x.classList.remove('xpulse');},1400);}
+ setTimeout(()=>{m.classList.remove('nudge');},400);
+ return true;}
+document.getElementById('overlay').addEventListener('click',e=>{if(e.target.id==='overlay')nudgeModal();});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape'||e.isComposing)return;
+ const o=document.getElementById('overlay');
+ if(o&&o.classList.contains('show')){e.preventDefault();nudgeModal();}});
 
 /* ----- customer ----- */
 function openCust(code){const c=code?cust(code):{code:'',name:'',address:'',taxId:'',contact:'',phone:'',email:''};const edit=!!code;
