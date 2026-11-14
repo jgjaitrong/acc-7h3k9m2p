@@ -42,6 +42,8 @@ svg{width:18px;height:18px;flex:0 0 auto}
 .nav a:hover{background:rgba(255,255,255,.07);color:#fff}
 .nav a.on{background:linear-gradient(90deg,rgba(42,120,214,.9),rgba(42,120,214,.55));color:#fff;box-shadow:0 4px 14px rgba(42,120,214,.35)}
 .nav a.on svg{opacity:1}
+.nav a .nbadge{margin-left:auto;background:rgba(255,255,255,.16);color:#fff;font-size:11px;font-weight:700;padding:1px 8px;border-radius:20px;line-height:18px}
+.nav a.on .nbadge{background:rgba(255,255,255,.28)}
 .side .foot{padding:14px;border-top:1px solid rgba(255,255,255,.08);font-size:11px;color:#8092b4}
 .main{margin-left:248px;flex:1;min-width:0;display:flex;flex-direction:column}
 .top{position:sticky;top:0;z-index:10;background:rgba(243,245,251,.85);backdrop-filter:blur(8px);padding:18px 32px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}
@@ -147,7 +149,9 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--
 .sec-t{font-size:15px;font-weight:700;margin:2px 0 14px;font-family:'Prompt',var(--sans);display:flex;align-items:center;gap:8px}
 .toast{position:fixed;bottom:24px;right:24px;z-index:80;display:flex;flex-direction:column;gap:10px}
 .toast .t{background:#1e293b;color:#fff;padding:13px 18px;border-radius:11px;font-size:13.5px;font-weight:500;box-shadow:0 10px 30px rgba(0,0,0,.25);animation:slide .25s ease;display:flex;gap:9px;align-items:center}
-.toast .t.ok{background:#0f8a3c}.toast .t.err{background:#c0392b}
+.toast .t.ok{background:#0f8a3c}.toast .t.err{background:#c0392b}.toast .t.warn{background:#b7791f}
+.toast .t .tundo{margin-left:8px;border:0;cursor:pointer;background:rgba(255,255,255,.2);color:#fff;border-radius:7px;padding:5px 11px;font:inherit;font-weight:700;font-size:12.5px;white-space:nowrap}
+.toast .t .tundo:hover{background:rgba(255,255,255,.32)}
 @keyframes slide{from{transform:translateX(30px);opacity:0}to{transform:none;opacity:1}}
 .logo-prev{width:56px;height:56px;border-radius:10px;object-fit:contain;background:#fff;border:1px solid var(--line)}
 
@@ -349,6 +353,7 @@ const I={
  cash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
  edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>',
  trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>',
+ restore:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 2.64-6.36L3 8"/><path d="M3 3v5h5"/></svg>',
  arrow:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>',
  down:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
  up:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
@@ -369,9 +374,12 @@ Object.assign(I,{
 /* ============ STATE ============ */
 const LS='acct_qt_inv_rc_v1';
 let state=null;
+/* ถังขยะ: ค่าคงที่ต้องประกาศก่อนโค้ดเริ่มต้นจะเรียก migrate() */
+const TRASH_DAYS=90, TRASH_MAX=500;
+const TRASH_T={job:'งาน / เอกสาร',cust:'ลูกค้า',inst:'งวดวางบิล',rc:'ใบเสร็จ (ยกเลิกรับเงิน)',exp:'รายจ่าย',iv:'ภาษีซื้อ',stmt:'Statement',payee:'ผู้รับเงิน'};
 function blank(){return{
  settings:{companyName:'บริษัท ตัวอย่าง จำกัด',addr1:'123/45 ถนนตัวอย่าง แขวงตัวอย่าง',addr2:'เขตตัวอย่าง กรุงเทพฯ 10000',taxId:'0-1055-xxxxx-xx-x',branch:'สำนักงานใหญ่',phone:'0x-xxx-xxxx',email:'info@example.com',website:'www.example.com',bank:'ธนาคารตัวอย่าง',accName:'บริษัท ตัวอย่าง จำกัด',accNo:'xxx-x-xxxxx-x',bankBranch:'สาขาตัวอย่าง',vatRate:0.07,whtRate:0.03,creditDays:30,validDays:30,footer:'ยืนราคา 30 วัน / กำหนดส่งมอบตามตกลง',signName:'',signTitle:'',logo:'',docStyle:'color'},
- customers:[],jobs:[],expenses:[],statements:[],inputVat:[],payees:[],stmtOpen:{}
+ customers:[],jobs:[],expenses:[],statements:[],inputVat:[],payees:[],stmtOpen:{},trash:[]
 };}
 function sample(){const s=blank();
  s.customers=[
@@ -411,6 +419,8 @@ function migrate(d){if(!d||typeof d!=='object')return null;
  num('vatRate',base.vatRate,0,1);num('whtRate',base.whtRate,0,1);num('creditDays',base.creditDays,0,3650);num('validDays',base.validDays,0,3650);
  if(!d.settings.docStyle)d.settings.docStyle='color';
  d.jobs=d.jobs.filter(j=>j&&j.id);d.jobs.forEach(j=>{if(!Array.isArray(j.items))j.items=[];if(!Array.isArray(j.payments))j.payments=[];if(j.installments&&!Array.isArray(j.installments))j.installments=[];});
+ if(!Array.isArray(d.trash))d.trash=[];               /* ถังขยะ: ไฟล์เก่าที่ยังไม่มี ให้เริ่มว่าง */
+ try{trashSweep(d);}catch(e){}                         /* ลบรายการที่ครบกำหนดเก็บแล้วทิ้ง */
  return d;}
 let loadCorrupt=false;
 function load(){let r=null;try{r=localStorage.getItem(LS);}catch(e){return null;}
@@ -581,7 +591,7 @@ function gsCfg(){try{return JSON.parse(localStorage.getItem(GSCFG))||{};}catch(e
 function gsCfgSave(c){localStorage.setItem(GSCFG,JSON.stringify(c||{}));}
 let gsT=null;
 function gsQueue(){if(persistBroken||pullingCloud||mustPullFirst)return;const c=gsCfg();if(!c.url||!c.auto)return;clearTimeout(gsT);gsT=setTimeout(()=>{gsBackup(true);},9000);}
-async function gsBackup(silent){const c=gsCfg();if(!c.url){if(!silent)toast('ยังไม่ได้ตั้งค่าลิงก์ Google Sheet','err');return false;}try{const body=JSON.stringify({action:'backup',savedAt:localSavedAt()||Date.now(),data:state});await fetch(c.url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body});gsCfgSave({...c,last:Date.now()});if(!silent)toast('สำรองขึ้น Google Sheet แล้ว','ok');return true;}catch(e){if(!silent)toast('สำรองขึ้น Google Sheet ไม่สำเร็จ','err');return false;}}
+async function gsBackup(silent){const c=gsCfg();if(!c.url){if(!silent)toast('ยังไม่ได้ตั้งค่าลิงก์ Google Sheet','err');return false;}try{const body=JSON.stringify({action:'backup',savedAt:localSavedAt()||Date.now(),data:Object.assign({},state,{trash:undefined})});await fetch(c.url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body});gsCfgSave({...c,last:Date.now()});if(!silent)toast('สำรองขึ้น Google Sheet แล้ว','ok');return true;}catch(e){if(!silent)toast('สำรองขึ้น Google Sheet ไม่สำเร็จ','err');return false;}}
 function gsRestore(){const c=gsCfg();if(!c.url){toast('ยังไม่ได้ตั้งค่าลิงก์ Google Sheet','err');return;}if(!confirm('กู้คืนข้อมูลจาก Google Sheet? ข้อมูลปัจจุบันในเครื่องนี้จะถูกแทนที่ด้วยชุดสำรองล่าสุด'))return;const cb='gsCB_'+Date.now();const s=document.createElement('script');let done=false;const cleanup=()=>{done=true;try{delete window[cb];}catch(e){window[cb]=undefined;}s.remove();};window[cb]=(resp)=>{if(done)return;try{if(resp&&resp.data){if(adoptCloud(resp.data,resp.savedAt,'กู้คืนข้อมูลจาก Google Sheet แล้ว'))cloudQueue();}else toast('ยังไม่พบข้อมูลสำรองใน Google Sheet','err');}catch(e){toast('กู้คืนไม่สำเร็จ','err');}cleanup();};s.onerror=()=>{if(!done){toast('เชื่อมต่อ Google Sheet ไม่สำเร็จ','err');cleanup();}};s.src=c.url+(c.url.includes('?')?'&':'?')+'action=restore&callback='+cb+'&_='+Date.now();document.body.appendChild(s);setTimeout(()=>{if(!done){toast('หมดเวลาเชื่อมต่อ Google Sheet','err');cleanup();}},15000);}
 
 /* ============ HELPERS ============ */
@@ -664,7 +674,8 @@ function natCmp(a,b){a=String(a==null?'':a).trim();b=String(b==null?'':b).trim()
  }
  return a===b?0:(a<b?-1:1);}
 function sortTh(cur,k,dir,label,fn,cls){return `<th class="sorth ${cur===k?'on':''} ${cls||''}" onclick="${fn}('${k}')" title="คลิกเพื่อเรียงลำดับ">${label}<span class="ar">${cur===k?(dir>0?'▲':'▼'):'⇅'}</span></th>`;}
-function nextId(code,date){const pre=code+'-'+date.replace(/-/g,'');let mx=0;state.jobs.forEach(j=>{if(j.id.startsWith(pre+'-')){const n=parseInt(j.id.slice(pre.length+1));if(n>mx)mx=n;}});return pre+'-'+(mx+1);}
+/* เลขที่เอกสารที่อยู่ในถังขยะยังถือว่า “ถูกใช้แล้ว” — กันไม่ให้งานใหม่ได้เลขซ้ำ แล้วกู้คืนไม่ได้ */
+function nextId(code,date){const pre=code+'-'+String(date||todayISO()).replace(/-/g,'');let mx=0;state.jobs.map(j=>j.id).concat(trashJobIds()).forEach(id=>{if(id&&String(id).startsWith(pre+'-')){const n=parseInt(String(id).slice(pre.length+1));if(n>mx)mx=n;}});return pre+'-'+(mx+1);}
 function toast(msg,type){const t=document.createElement('div');t.className='t '+(type||'');t.innerHTML=(type==='ok'?I.check:type==='err'?I.alert:'')+'<span>'+esc(msg)+'</span>';document.getElementById('toast').appendChild(t);setTimeout(()=>t.remove(),2600);}
 
 /* ============ BAHT TEXT ============ */
@@ -673,14 +684,16 @@ function bahttext(num){num=Math.round((Number(num)+1e-9)*100)/100;let baht=Math.
  if(baht===0&&st===0)return'ศูนย์บาทถ้วน';let r='';if(baht>0)r+=conv(baht)+'บาท';if(st>0)r+=conv(st)+'สตางค์';else if(baht>0)r+='ถ้วน';return r;}
 
 /* ============ NAV / ROUTER ============ */
-const PAGES=[['dash','แดชบอร์ด',I.dash],['finance','สถานะการเงิน',I.trend],['docs','งาน / เอกสาร',I.doc],['expenses','รายจ่าย',I.out],['vat','ภาษี (VAT)',I.money],['pnd','ภ.ง.ด. หัก ณ ที่จ่าย',I.file],['statement','Statement เดินบัญชี',I.bank],['customers','ลูกค้า',I.users],['settings','ตั้งค่า',I.gear]];
+const PAGES=[['dash','แดชบอร์ด',I.dash],['finance','สถานะการเงิน',I.trend],['docs','งาน / เอกสาร',I.doc],['expenses','รายจ่าย',I.out],['vat','ภาษี (VAT)',I.money],['pnd','ภ.ง.ด. หัก ณ ที่จ่าย',I.file],['statement','Statement เดินบัญชี',I.bank],['customers','ลูกค้า',I.users],['trash','ถังขยะ',I.trash],['settings','ตั้งค่า',I.gear]];
 let route='dash';
-function buildNav(){document.getElementById('nav').innerHTML=PAGES.map(p=>`<a class="${p[0]===route?'on':''}" onclick="go('${p[0]}')">${p[2]}<span>${p[1]}</span></a>`).join('');}
+function buildNav(){const tn=(state&&Array.isArray(state.trash))?state.trash.length:0;document.getElementById('nav').innerHTML=PAGES.map(p=>`<a class="${p[0]===route?'on':''}" onclick="go('${p[0]}')">${p[2]}<span>${p[1]}</span>${(p[0]==='trash'&&tn)?`<b class="nbadge" title="มี ${tn} รายการในถังขยะ">${tn}</b>`:''}</a>`).join('');}
 function go(r){route=r;buildNav();document.getElementById('side').classList.remove('open');render();}
-const SUB={dash:'ภาพรวมยอดขายและการชำระเงิน',finance:'สถานะการเงินสำหรับผู้บริหาร — รายรับ รายจ่าย กำไรสุทธิ',docs:'ใบเสนอราคา ใบแจ้งหนี้ และใบเสร็จ/ใบกำกับภาษี',expenses:'บันทึกและติดตามรายจ่ายของกิจการ',vat:'คำนวณ VAT ที่ต้องนำส่งสรรพากรรายเดือน และยอดที่ต้องได้รับโอนจากลูกค้า',pnd:'สร้างแบบยื่น ภ.ง.ด.1 (พนักงานประจำ) และ ภ.ง.ด.3 (ฟรีแลนซ์/ผู้รับจ้าง) พร้อมใบแนบ จากยอดหัก ณ ที่จ่ายรายเดือน',statement:'บัญชีรายรับ-รายจ่ายจริง (เงินเข้า-ออก) พร้อม Dashboard สรุปและตรวจยอดกับธนาคาร',customers:'ทะเบียนลูกค้าและรหัสลูกค้า',settings:'ข้อมูลกิจการ ภาษี และสำรองข้อมูล'};
+const SUB={dash:'ภาพรวมยอดขายและการชำระเงิน',finance:'สถานะการเงินสำหรับผู้บริหาร — รายรับ รายจ่าย กำไรสุทธิ',docs:'ใบเสนอราคา ใบแจ้งหนี้ และใบเสร็จ/ใบกำกับภาษี',expenses:'บันทึกและติดตามรายจ่ายของกิจการ',vat:'คำนวณ VAT ที่ต้องนำส่งสรรพากรรายเดือน และยอดที่ต้องได้รับโอนจากลูกค้า',pnd:'สร้างแบบยื่น ภ.ง.ด.1 (พนักงานประจำ) และ ภ.ง.ด.3 (ฟรีแลนซ์/ผู้รับจ้าง) พร้อมใบแนบ จากยอดหัก ณ ที่จ่ายรายเดือน',statement:'บัญชีรายรับ-รายจ่ายจริง (เงินเข้า-ออก) พร้อม Dashboard สรุปและตรวจยอดกับธนาคาร',customers:'ทะเบียนลูกค้าและรหัสลูกค้า',trash:'รายการที่ถูกลบ — กู้คืนกลับมาแก้ไขต่อ หรือลบถาวรได้',settings:'ข้อมูลกิจการ ภาษี และสำรองข้อมูล'};
 
 function render(){
  const co=state.settings;
+ if(!PAGES.find(p=>p[0]===route))route='dash';   /* กันหน้าที่ไม่มีอยู่ทำแอปพัง */
+ buildNav();                                      /* อัปเดตตัวเลขถังขยะบนเมนูทุกครั้งที่ข้อมูลเปลี่ยน */
  document.getElementById('brandName').textContent=co.companyName||'ระบบบัญชี';
  document.getElementById('brandLogo').textContent=(co.companyName||'บ').trim().charAt(0);
  document.getElementById('pageTitle').textContent=PAGES.find(p=>p[0]===route)[1];
@@ -692,8 +705,10 @@ function render(){
  else if(route==='vat')ta.innerHTML=`<button class="btn btn-p" onclick="openInputVat()">${I.plus}เพิ่มภาษีซื้อ</button> <button class="btn btn-p" style="background:#0f8a3c;box-shadow:0 4px 12px rgba(15,138,60,.28)" onclick="exportVatExcel()">${I.down}Export Excel</button>`;
  else if(route==='statement')ta.innerHTML=`<button class="btn btn-p" onclick="openStmt()">${I.plus}เพิ่มรายการ</button> <button class="btn btn-p" style="background:#0f8a3c;box-shadow:0 4px 12px rgba(15,138,60,.28)" onclick="exportStmtExcel()">${I.down}Export Excel</button> <button class="btn btn-g" onclick="document.getElementById('stmtXlsx').click()">${I.up}นำเข้า Excel/CSV</button> <button class="btn btn-g" onclick="document.getElementById('stmtPdf').click()">${I.file}นำเข้า PDF</button><input type="file" id="stmtXlsx" accept=".xlsx,.xls,.csv" style="display:none" onchange="if(this.files[0])importStmtExcel(this.files[0]);this.value=''"><input type="file" id="stmtPdf" accept=".pdf" style="display:none" onchange="if(this.files[0])importStmtPdf(this.files[0]);this.value=''">`;
  else if(route==='pnd')ta.innerHTML=`<button class="btn btn-p" onclick="openPayee('')">${I.plus}เพิ่มผู้รับเงิน</button> <button class="btn btn-g" onclick="openPayeeList()">${I.users}จัดการรายชื่อ</button>`;
+ else if(route==='trash')ta.innerHTML=trashList().length?`<button class="btn btn-d" onclick="emptyTrash()">${I.trash}ล้างถังขยะ</button>`:'';
  else ta.innerHTML='';
  if(route==='dash')viewDash();
+ else if(route==='trash')viewTrash();
  else if(route==='finance')viewFinance();
  else if(route==='docs')viewDocs();
  else if(route==='expenses')viewExpenses();
@@ -956,14 +971,23 @@ function saveExp(id){const g=k=>{const el=document.getElementById('e_'+k);return
  save();closeModal();render();toast('บันทึกรายจ่ายแล้ว','ok');}
 let pendDel=null;
 function confirmDel(title,detail){modal(`<div class="mh"><h3>${title}</h3><button class="x" onclick="closeModal()">✕</button></div>`+
- `<div class="mb">ต้องการลบรายการนี้ใช่หรือไม่? การลบนี้ย้อนกลับไม่ได้<div style="margin-top:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;line-height:1.7;font-size:13px">${detail}</div></div>`+
+ `<div class="mb">ต้องการลบรายการนี้ใช่หรือไม่? รายการจะถูกย้ายไป<b>ถังขยะ</b> และกู้คืนกลับมาได้ภายใน ${TRASH_DAYS} วัน<div style="margin-top:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;line-height:1.7;font-size:13px">${detail}</div></div>`+
  `<div class="mf"><button class="btn btn-g" onclick="closeModal()">ยกเลิก</button><button class="btn btn-d" onclick="doPendDel()">${I.trash}ลบ</button></div>`);}
-function doPendDel(){const d=pendDel;pendDel=null;if(!d)return;
- if(d.t==='exp')state.expenses=state.expenses.filter(e=>e.id!==d.id);
- else if(d.t==='iv')state.inputVat=(state.inputVat||[]).filter(e=>e.id!==d.id);
- else if(d.t==='stmt')state.statements=state.statements.filter(t=>t.id!==d.id);
- else if(d.t==='payee'){state.payees=(state.payees||[]).filter(x=>x.id!==d.id);(state.expenses||[]).forEach(e=>{if(e.payeeId===d.id)e.payeeId='';});}
- save();closeModal();render();if(d.t==='payee')openPayeeList();toast('ลบแล้ว','ok');}
+function doPendDel(){const d=pendDel;pendDel=null;if(!d)return;let tid=null;
+ if(d.t==='exp'){const e=state.expenses.find(x=>x.id===d.id);
+  if(e)tid=toTrash('exp',e.desc||e.category||'รายจ่าย',dTH(e.date)+' · '+B(e.amount)+(e.payee?' · '+e.payee:''),{exp:e});
+  state.expenses=state.expenses.filter(e=>e.id!==d.id);}
+ else if(d.t==='iv'){const e=(state.inputVat||[]).find(x=>x.id===d.id);
+  if(e)tid=toTrash('iv',e.desc||e.seller||'ภาษีซื้อ',dTH(e.date)+(e.seller?' · '+e.seller:'')+' · VAT '+B(e.vat),{iv:e});
+  state.inputVat=(state.inputVat||[]).filter(e=>e.id!==d.id);}
+ else if(d.t==='stmt'){const t=state.statements.find(x=>x.id===d.id);
+  if(t)tid=toTrash('stmt',t.desc||'รายการเดินบัญชี',dTH(t.date)+(Number(t.moneyIn)?' · เข้า '+B(t.moneyIn):'')+(Number(t.moneyOut)?' · ออก '+B(t.moneyOut):''),{rows:[t]});
+  state.statements=state.statements.filter(t=>t.id!==d.id);stmtSel.delete(d.id);}
+ else if(d.t==='payee'){const p=(state.payees||[]).find(x=>x.id===d.id);
+  const refs=(state.expenses||[]).filter(e=>e.payeeId===d.id).map(e=>e.id);   /* จำไว้ว่ารายจ่ายไหนเคยผูกกับผู้รับเงินรายนี้ กู้คืนแล้วจะผูกกลับให้ */
+  if(p)tid=toTrash('payee',p.name||'ผู้รับเงิน',(p.taxId?'เลขผู้เสียภาษี '+p.taxId:'')+(refs.length?(p.taxId?' · ':'')+'ผูกกับรายจ่าย '+refs.length+' รายการ':''),{payee:p,refs});
+  state.payees=(state.payees||[]).filter(x=>x.id!==d.id);(state.expenses||[]).forEach(e=>{if(e.payeeId===d.id)e.payeeId='';});}
+ save();closeModal();render();if(d.t==='payee')openPayeeList();toastUndo('ย้ายไปถังขยะแล้ว',tid);}
 function delExp(id){const e=state.expenses.find(x=>x.id===id);if(!e)return;pendDel={t:'exp',id:id};confirmDel('ลบรายจ่าย',`${dTH(e.date)} · ${esc(e.desc||e.category||'')}${e.payee?' · '+esc(e.payee):''}<br>จำนวนเงิน <b>${B(e.amount)}</b>`);}
 function togglePaidExp(id){const e=state.expenses.find(x=>x.id===id);if(!e)return;e.paid=!e.paid;save();render();toast(e.paid?'ทำเครื่องหมายว่าชำระแล้ว':'ยกเลิกการชำระ','ok');}
 
@@ -973,15 +997,20 @@ function ymLabel(k){return (MNS[parseInt(k.slice(5,7))-1]||'')+' '+k.slice(0,4);
 function inMonth(iso,mk){return mk==='all'||(iso&&iso.slice(0,7)===mk);}
 function setVatMonth(m){vatMonth=m;vatSel.clear();viewVat();}
 function setWht(v){state.settings.whtRate=(parseFloat(v)||0)/100;save();viewVat();}
+/* เลขผู้เสียภาษีสำหรับรายงาน: คืนเป็นตัวอักษร 13 หลักเสมอ — เลข 0 ข้างหน้าต้องไม่หาย
+   (ถ้าเหลือ 12 หลัก แปลว่าเลข 0 หน้าหายไปตอนนำเข้าจาก Excel เติมกลับให้) */
+function taxIdText(v){const s=String(v==null?'':v).trim();if(!s||s==='-')return '';const dg=s.replace(/[\s\-–.]/g,'');if(/^\d{13}$/.test(dg))return dg;if(/^\d{12}$/.test(dg))return '0'+dg;return s;}
+/* บังคับคอลัมน์ในชีตให้เป็นข้อความ (Excel จะได้ไม่แปลงเป็นตัวเลขแล้วตัดเลข 0 หน้าทิ้ง) */
+function xlsTextCol(ws,col){const r=XLSX.utils.decode_range(ws['!ref']||'A1');for(let i=r.s.r;i<=r.e.r;i++){const a=XLSX.utils.encode_cell({r:i,c:col});if(ws[a]){ws[a].t='s';ws[a].v=String(ws[a].v==null?'':ws[a].v);ws[a].z='@';}}}
 function rcTaxEvents(){const out=[];state.jobs.forEach(j=>{const vatable=(j.vat!==false);const rate=vatable?state.settings.vatRate:0;const insts=j.installments||[];
-  if(insts.length){insts.forEach((i,ii)=>{if(i.rc&&i.rc.issued){const billed=instBase(j,i);const gross=Math.round((((Number(i.rc.amount)||0)+(Number(i.rc.wht)||0)))*100)/100;const base=gross>0?Math.round(gross/(1+rate)*100)/100:billed;out.push({date:i.rc.date,jobId:j.id,key:j.id+'#i'+ii,vatable:vatable,cust:cust(j.customerCode)?.name||'',base:base,vat:Math.round((gross>0?(gross-base):base*rate)*100)/100,docNo:docNumOf(j,'RC',i.no),note:'งวดที่ '+i.no});}});}
+  if(insts.length){insts.forEach((i,ii)=>{if(i.rc&&i.rc.issued){const billed=instBase(j,i);const gross=Math.round((((Number(i.rc.amount)||0)+(Number(i.rc.wht)||0)))*100)/100;const base=gross>0?Math.round(gross/(1+rate)*100)/100:billed;out.push({date:i.rc.date,jobId:j.id,key:j.id+'#i'+ii,vatable:vatable,cust:cust(j.customerCode)?.name||'',ctax:taxIdText((cust(j.customerCode)||{}).taxId),base:base,vat:Math.round((gross>0?(gross-base):base*rate)*100)/100,docNo:docNumOf(j,'RC',i.no),note:'งวดที่ '+i.no});}});}
   else if(j.rcIssued){const c=compute(j);const pays=(j.payments||[]);
-   if(!pays.length){out.push({date:billDate(j),jobId:j.id,key:j.id+'#full',vatable:vatable,cust:cust(j.customerCode)?.name||'',base:c.sub,vat:c.vat,docNo:docNumOf(j,'RC'),note:''});}
+   if(!pays.length){out.push({date:billDate(j),jobId:j.id,key:j.id+'#full',vatable:vatable,cust:cust(j.customerCode)?.name||'',ctax:taxIdText((cust(j.customerCode)||{}).taxId),base:c.sub,vat:c.vat,docNo:docNumOf(j,'RC'),note:''});}
    else{const multi=pays.length>1;
     pays.forEach((p,pi)=>{                                  /* 1 ใบเสร็จ = 1 งวดรับเงินจริง ไม่ใช่ยอดเต็มบิล */
      const gross=Math.round(((Number(p.amount)||0)+(Number(p.wht)||0))*100)/100;
      const base=Math.round(gross/(1+rate)*100)/100;
-     out.push({date:p.date||billDate(j),jobId:j.id,key:j.id+'#p'+pi,vatable:vatable,cust:cust(j.customerCode)?.name||'',base:base,vat:Math.round((gross-base)*100)/100,docNo:docNumOf(j,'RC',multi?(pi+1):null),note:multi?('รับเงินครั้งที่ '+(pi+1)):''});});}}});return out;}
+     out.push({date:p.date||billDate(j),jobId:j.id,key:j.id+'#p'+pi,vatable:vatable,cust:cust(j.customerCode)?.name||'',ctax:taxIdText((cust(j.customerCode)||{}).taxId),base:base,vat:Math.round((gross-base)*100)/100,docNo:docNumOf(j,'RC',multi?(pi+1):null),note:multi?('รับเงินครั้งที่ '+(pi+1)):''});});}}});return out;}
 let vatSel=new Set();let vatVis=[];
 function toggleVatSel(k,ch){if(ch)vatSel.add(k);else vatSel.delete(k);viewVat();}
 function vatSelAll(ch){if(ch)vatVis.forEach(k=>vatSel.add(k));else vatVis.forEach(k=>vatSel.delete(k));viewVat();}
@@ -1054,15 +1083,17 @@ function exportVatExcel(){try{const wb=XLSX.utils.book_new();const wht=Number(st
  (state.inputVat||[]).forEach(e=>{const k=(e.date||'').slice(0,7);if(k){mset[k]=mset[k]||{out:0,inx:0};mset[k].inx+=Number(e.vat)||0;}});
  const A=[['เดือน','ภาษีขาย (Output)','ภาษีซื้อ (Input)','VAT ต้องจ่าย']];Object.keys(mset).sort().forEach(k=>{const m=mset[k];A.push([ymLabel(k),Math.round(m.out*100)/100,Math.round(m.inx*100)/100,Math.round((m.out-m.inx)*100)/100]);});
  const ws1=XLSX.utils.aoa_to_sheet(A);ws1['!cols']=[{wch:16},{wch:17},{wch:17},{wch:16}];XLSX.utils.book_append_sheet(wb,ws1,'สรุป VAT รายเดือน');
- const B2=[['เลขที่ใบเสร็จ','ลูกค้า','วันที่รับ','ก่อน VAT','VAT','หัก ณ ที่จ่าย','ต้องได้รับโอน']];rcE.forEach(e=>{const w=e.vatable?Math.round(e.base*wht*100)/100:0;B2.push([e.docNo,e.cust,e.date,e.base,e.vat,w,Math.round((e.base+e.vat-w)*100)/100]);});
- const ws2=XLSX.utils.aoa_to_sheet(B2);ws2['!cols']=[{wch:20},{wch:26},{wch:12},{wch:13},{wch:12},{wch:14},{wch:15}];XLSX.utils.book_append_sheet(wb,ws2,'ยอดต้องได้รับโอน');
+ const TAXH='เลขประจำตัวผู้เสียภาษีอากรของผู้ซื้อสินค้า/ผู้รับบริการ';
+ /* หัก ณ ที่จ่ายคิดแบบเดียวกับหน้า VAT ทุกใบ (เดิมไฟล์ Excel ไม่คิดให้งานที่ไม่มี VAT ยอดจึงไม่ตรงกับหน้าจอ) */
+ const B2=[['เลขที่ใบเสร็จ','ลูกค้า',TAXH,'วันที่รับ','ก่อน VAT','VAT','หัก ณ ที่จ่าย','ต้องได้รับโอน']];rcE.forEach(e=>{const w=Math.round(e.base*wht*100)/100;B2.push([e.docNo,e.cust,e.ctax||'',e.date,e.base,e.vat,w,Math.round((e.base+e.vat-w)*100)/100]);});
+ const ws2=XLSX.utils.aoa_to_sheet(B2);xlsTextCol(ws2,2);ws2['!cols']=[{wch:20},{wch:26},{wch:30},{wch:12},{wch:13},{wch:12},{wch:14},{wch:15}];XLSX.utils.book_append_sheet(wb,ws2,'ยอดต้องได้รับโอน');
  const C2=[['วันที่','รายละเอียด','ผู้ขาย','มูลค่าก่อน VAT','ภาษีซื้อ']];(state.inputVat||[]).forEach(e=>C2.push([e.date,e.desc,e.seller||'',e.base,e.vat]));
  const ws3=XLSX.utils.aoa_to_sheet(C2);ws3['!cols']=[{wch:12},{wch:30},{wch:22},{wch:15},{wch:12}];XLSX.utils.book_append_sheet(wb,ws3,'ภาษีซื้อเพิ่มเอง');
  XLSX.writeFile(wb,'ภาษี-VAT-'+todayISO()+'.xlsx');toast('ส่งออกภาษีเป็น Excel แล้ว','ok');}catch(err){console.log(err);toast('ส่งออกไม่สำเร็จ','err');}}
 function exportVatSel(){try{if(!vatSel.size){toast('ยังไม่ได้เลือกรายการ','err');return;}const wht=Number(state.settings.whtRate)||0;const rcE=rcTaxEvents().filter(e=>vatSel.has(e.key)).sort((a,b)=>a.date<b.date?-1:1);if(!rcE.length){toast('ไม่พบรายการที่เลือก','err');return;}
- const B2=[['เลขที่ใบเสร็จ','ลูกค้า','วันที่รับ','ก่อน VAT','VAT','หัก ณ ที่จ่าย','ต้องได้รับโอน','มี VAT']];let tb=0,tv=0,tw=0,te=0;rcE.forEach(e=>{const w=e.vatable?Math.round(e.base*wht*100)/100:0;const ex=Math.round((e.base+e.vat-w)*100)/100;tb+=e.base;tv+=e.vat;tw+=w;te+=ex;B2.push([e.docNo,e.cust,e.date,e.base,e.vat,w,ex,e.vatable?'มี':'ไม่มี']);});
- B2.push(['','','รวม',Math.round(tb*100)/100,Math.round(tv*100)/100,Math.round(tw*100)/100,Math.round(te*100)/100,'']);
- const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(B2);ws['!cols']=[{wch:20},{wch:26},{wch:12},{wch:13},{wch:12},{wch:14},{wch:15},{wch:8}];XLSX.utils.book_append_sheet(wb,ws,'ยอดต้องได้รับโอน');
+ const B2=[['เลขที่ใบเสร็จ','ลูกค้า','เลขประจำตัวผู้เสียภาษีอากรของผู้ซื้อสินค้า/ผู้รับบริการ','วันที่รับ','ก่อน VAT','VAT','หัก ณ ที่จ่าย','ต้องได้รับโอน','มี VAT']];let tb=0,tv=0,tw=0,te=0;rcE.forEach(e=>{const w=Math.round(e.base*wht*100)/100;const ex=Math.round((e.base+e.vat-w)*100)/100;tb+=e.base;tv+=e.vat;tw+=w;te+=ex;B2.push([e.docNo,e.cust,e.ctax||'',e.date,e.base,e.vat,w,ex,e.vatable?'มี':'ไม่มี']);});
+ B2.push(['','','','รวม',Math.round(tb*100)/100,Math.round(tv*100)/100,Math.round(tw*100)/100,Math.round(te*100)/100,'']);
+ const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet(B2);xlsTextCol(ws,2);ws['!cols']=[{wch:20},{wch:26},{wch:30},{wch:12},{wch:13},{wch:12},{wch:14},{wch:15},{wch:8}];XLSX.utils.book_append_sheet(wb,ws,'ยอดต้องได้รับโอน');
  XLSX.writeFile(wb,'ยอดรับโอน-เลือก-'+todayISO()+'.xlsx');toast('ส่งออก '+rcE.length+' รายการที่เลือกแล้ว','ok');}catch(err){console.log(err);toast('ส่งออกไม่สำเร็จ','err');}}
 /* ============ DOCS ============ */
 let docFilter='all';let docMonth='all';let docType='QT';let docSel=new Set();let docVis=[];let docSearch='';let docCust='';let docSugOpen=false;
@@ -1399,9 +1430,172 @@ function saveGsCfg(){const url=(document.getElementById('gs_url').value||'').tri
 function pickLogo(inp){const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{const img=new Image();img.onload=()=>{try{const MAX=320;let w=img.width||1,h=img.height||1;const sc=Math.min(1,MAX/Math.max(w,h));w=Math.max(1,Math.round(w*sc));h=Math.max(1,Math.round(h*sc));const cv=document.createElement('canvas');cv.width=w;cv.height=h;const cx=cv.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,w,h);cx.drawImage(img,0,0,w,h);let out=cv.toDataURL('image/png');if(out.length>160000)out=cv.toDataURL('image/jpeg',0.85);state.settings.logo=out;}catch(err){state.settings.logo=e.target.result;}const p=document.getElementById('logoPrev');if(p){p.src=state.settings.logo;p.style.display='';}if(save())toast('อัปโหลดโลโก้แล้ว','ok');};img.onerror=()=>toast('ไฟล์รูปนี้อ่านไม่ได้','err');img.src=e.target.result;};r.readAsDataURL(f);}
 function saveSettings(){const g=k=>document.getElementById('s_'+k).value;['companyName','addr1','addr2','taxId','branch','phone','email','website','bank','accName','accNo','bankBranch','footer','signName','signTitle'].forEach(k=>{const el=document.getElementById('s_'+k);if(el)state.settings[k]=el.value;});state.settings.vatRate=(parseFloat(document.getElementById('s_vat').value)||0)/100;state.settings.creditDays=parseInt(document.getElementById('s_credit').value)||0;state.settings.validDays=parseInt(document.getElementById('s_valid').value)||0;const ds=document.getElementById('s_docstyle');if(ds)state.settings.docStyle=ds.value;save();render();toast('บันทึกการตั้งค่าแล้ว','ok');}
 
+/* ============ ถังขยะ (TRASH) ============
+   ทุกการลบ = ย้ายมาเก็บที่นี่ก่อน (สำเนาข้อมูลเดิมทั้งก้อน) กู้คืนกลับไปแก้ไขต่อได้ภายใน TRASH_DAYS วัน
+   แต่ละรายการ: {id, type, at = เวลาที่ลบ (ms), label, sub, data = ข้อมูลที่ต้องใช้คืนกลับ} */
+function tClone(o){return o==null?o:JSON.parse(JSON.stringify(o));}
+function trashList(){if(!state)return[];if(!Array.isArray(state.trash))state.trash=[];return state.trash;}
+/* เก็บกวาด: ทิ้งรายการที่เสีย/ครบกำหนด และไม่ให้ถังใหญ่เกินไป (ข้อมูลทั้งก้อนซิงค์ขึ้นคลาวด์ด้วย) */
+function trashSweep(d){d=d||state;if(!d)return 0;if(!Array.isArray(d.trash)){d.trash=[];return 0;}
+ const now=Date.now(),lim=now-TRASH_DAYS*86400000,n0=d.trash.length;
+ d.trash=d.trash.filter(t=>t&&typeof t==='object'&&TRASH_T[t.type]&&t.data&&typeof t.data==='object');
+ d.trash.forEach(t=>{const a=Number(t.at);if(!isFinite(a)||a<=0||a>now+86400000)t.at=now;else t.at=a;if(!t.id)t.id=uid('T');});
+ d.trash=d.trash.filter(t=>t.at>=lim);
+ if(d.trash.length>TRASH_MAX){d.trash.sort((a,b)=>b.at-a.at);d.trash.length=TRASH_MAX;}
+ return n0-d.trash.length;}
+function toTrash(type,label,sub,data){const t={id:uid('T'),type:type,at:Date.now(),label:String(label||''),sub:String(sub||''),data:tClone(data)};trashList().unshift(t);trashSweep();return t.id;}
+/* เลขที่งานทุกเลขที่ยังอยู่ในถังขยะ (ทั้งงานเดี่ยว และงานที่ติดไปกับลูกค้า) */
+function trashJobIds(){const ids=[];trashList().forEach(t=>{const d=t.data||{};if(t.type==='job'&&d.job&&d.job.id)ids.push(d.job.id);else if(t.type==='cust'&&Array.isArray(d.jobs))d.jobs.forEach(j=>{if(j&&j.id)ids.push(j.id);});});return ids;}
+function trashHasJob(id){return trashJobIds().indexOf(id)>=0;}
+function trashHasCust(code){return trashList().some(t=>t.type==='cust'&&t.data&&t.data.cust&&t.data.cust.code===code);}
+function jobTrashLabel(j){const cu=cust(j.customerCode);return j.id+' · '+((cu&&cu.name)||j.customerCode||'');}
+function jobTrashSub(j){const p=[];if(j.project)p.push(j.project);
+ try{const c=compute(j);p.push('ยอดรวม '+B(c.total));p.push(isHold(j)?'พักไว้ (HOLD)':c.pay==='paid'?'ชำระแล้ว':c.pay==='partial'?'ชำระบางส่วน':jobBilled(j)?'วางบิลแล้ว':'ยังไม่วางบิล');}catch(e){}
+ if(j.qtDate)p.push('เสนอราคา '+dTH(j.qtDate));return p.join(' · ');}
+function sameJob(a,b){return !!a&&!!b&&a.customerCode===b.customerCode&&a.qtDate===b.qtDate&&Math.abs(jobSub(a)-jobSub(b))<0.005&&(a.items||[]).length===(b.items||[]).length;}
+function freeJobId(j){return nextId(j.customerCode||'JOB',j.qtDate||todayISO());}
+function normName(s){return String(s||'').replace(/\s+/g,'').toLowerCase();}
+function dtTH(ms){const d=new Date(Number(ms)||0);const p=n=>String(n).padStart(2,'0');return dTH(d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()))+' '+p(d.getHours())+':'+p(d.getMinutes());}
+/* แจ้งเตือนหลังลบ พร้อมปุ่ม “เลิกทำ” — กดแล้วคืนของกลับทันที */
+function toastUndo(msg,tid){if(!tid){toast(msg,'ok');return;}
+ const t=document.createElement('div');t.className='t ok';t.innerHTML=I.check+'<span>'+esc(msg)+'</span>';
+ const b=document.createElement('button');b.type='button';b.className='tundo';b.textContent='เลิกทำ';
+ b.onclick=()=>{t.remove();restoreTrash(tid,'undo');};t.appendChild(b);
+ document.getElementById('toast').appendChild(t);setTimeout(()=>{try{t.remove();}catch(e){}},7000);}
+
+/* กู้คืน: mode 'open' = กู้คืนแล้วเปิดขึ้นมาแก้ไข · 'quiet' = กู้คืนอย่างเดียว · 'undo' = จากปุ่มเลิกทำ (กลับไปหน้าต่างเดิม)
+   force = ผู้ใช้ยืนยันแล้วว่าให้กู้คืนเป็นเลขใหม่ (กรณีเลขเดิมถูกใช้ไปแล้ว) */
+function restoreTrash(tid,mode,force){mode=mode||'quiet';
+ const L=trashList();const t=L.find(x=>x.id===tid);
+ if(!t){toast('ไม่พบรายการนี้ในถังขยะแล้ว','err');render();return false;}
+ const d=t.data||{};const notes=[];let open=null,back=null,msg='กู้คืนแล้ว';
+ try{
+  if(t.type==='job'){
+   const j=tClone(d.job);if(!j||!j.id)throw new Error('ข้อมูลงานไม่ครบ');
+   const ex=state.jobs.find(x=>x.id===j.id);
+   if(ex){if(!force){askJobClash(t,j,ex,mode);return false;}
+    const old=j.id;j.id=freeJobId(j);notes.push('เลข '+old+' ถูกใช้แล้ว จึงกู้คืนเป็นเลข '+j.id);}
+   if(j.customerCode&&!cust(j.customerCode))notes.push('ลูกค้า '+j.customerCode+' ไม่อยู่ในระบบ'+(trashHasCust(j.customerCode)?' (อยู่ในถังขยะ ให้กู้คืนลูกค้าด้วย)':''));
+   state.jobs.push(j);const jid=j.id;msg='กู้คืนงาน '+jid+' แล้ว';open=back=()=>openJob(jid);
+  }
+  else if(t.type==='cust'){
+   const c=tClone(d.cust);const jobs=(d.jobs||[]).map(tClone).filter(j=>j&&j.id);if(!c||!c.code)throw new Error('ข้อมูลลูกค้าไม่ครบ');
+   const ex=cust(c.code);
+   if(ex){if(normName(ex.name)===normName(c.name))notes.push('ลูกค้า '+c.code+' มีอยู่แล้ว จึงใช้รายเดิม');
+    else{let k=2;while(cust(c.code+'-'+k))k++;const nc=c.code+'-'+k;notes.push('รหัส '+c.code+' มีลูกค้ารายอื่นใช้อยู่ จึงกู้คืนเป็นรหัส '+nc);c.code=nc;jobs.forEach(j=>{j.customerCode=nc;});state.customers.push(c);}}
+   else state.customers.push(c);
+   let added=0,skipped=0,renum=0;
+   jobs.forEach(j=>{const e=state.jobs.find(x=>x.id===j.id);if(e){if(sameJob(e,j)){skipped++;return;}j.id=freeJobId(j);renum++;}state.jobs.push(j);added++;});
+   if(skipped)notes.push('ข้ามเอกสารที่มีอยู่ในระบบแล้ว '+skipped+' รายการ');
+   if(renum)notes.push('เปลี่ยนเลขเอกสารที่ซ้ำ '+renum+' รายการ');
+   const cc=c.code;msg='กู้คืนลูกค้า '+cc+(added?' พร้อมเอกสาร '+added+' รายการ':'')+' แล้ว';open=()=>openCust(cc);
+  }
+  else if(t.type==='inst'){
+   const j=state.jobs.find(x=>x.id===d.jobId);
+   if(!j){toast('กู้คืนไม่ได้: ไม่พบงาน '+d.jobId+' ในระบบ'+(trashHasJob(d.jobId)?' — งานนี้อยู่ในถังขยะ ให้กู้คืนงานก่อน':''),'err');return false;}
+   const it=tClone(d.inst);if(!it)throw new Error('ข้อมูลงวดไม่ครบ');it.rc=null;
+   if(!Array.isArray(j.installments))j.installments=[];
+   if(j.inv&&j.inv.issued&&!j.installments.length){toast('กู้คืนไม่ได้: งานนี้เปลี่ยนเป็นวางบิลเต็มจำนวนแล้ว','err');return false;}
+   if(j.installments.some(i=>Number(i.no)===Number(it.no))){const nn=j.installments.reduce((a,i)=>Math.max(a,Number(i.no)||0),0)+1;notes.push('งวดที่ '+it.no+' มีอยู่แล้ว จึงกู้คืนเป็นงวดที่ '+nn);it.no=nn;}
+   const used=j.installments.reduce((a,i)=>a+instBase(j,i),0);
+   const over=Math.round((used+instBase(j,it)-jobSub(j))*100)/100;
+   if(over>0.005&&!confirm('กู้คืนงวดนี้แล้ว ยอดรวมทุกงวดจะเกินมูลค่างานตามสัญญา '+B(over)+' บาท ต้องการกู้คืนต่อหรือไม่?'))return false;
+   j.installments.push(it);j.installments.sort((a,b)=>(a.no-b.no)||((a.date<b.date)?-1:1));
+   const jid=j.id,no=it.no;msg='กู้คืนงวดที่ '+no+' ของงาน '+jid+' แล้ว';
+   open=()=>{const jj=state.jobs.find(x=>x.id===jid);const ix=jj?(jj.installments||[]).findIndex(i=>Number(i.no)===Number(no)):-1;if(ix>=0)instForm(jid,ix);else openJob(jid);};
+   back=()=>openJob(jid);
+  }
+  else if(t.type==='rc'){
+   const j=state.jobs.find(x=>x.id===d.jobId);
+   if(!j){toast('กู้คืนไม่ได้: ไม่พบงาน '+d.jobId+' ในระบบ'+(trashHasJob(d.jobId)?' — งานนี้อยู่ในถังขยะ ให้กู้คืนงานก่อน':''),'err');return false;}
+   if(d.instNo!=null){const it=(j.installments||[]).find(i=>Number(i.no)===Number(d.instNo));
+    if(!it){toast('กู้คืนไม่ได้: ไม่พบงวดที่ '+d.instNo+' ของงาน '+j.id+' แล้ว','err');return false;}
+    if(it.rc&&it.rc.issued){toast('กู้คืนไม่ได้: งวดที่ '+d.instNo+' บันทึกรับเงินใหม่ไปแล้ว — ถ้าต้องการใช้ของเดิม ให้ยกเลิกรับเงินอันใหม่ก่อน','err');return false;}
+    it.rc=tClone(d.rc);msg='กู้คืนใบเสร็จงวดที่ '+d.instNo+' ของงาน '+j.id+' แล้ว';}
+   else{if((j.payments||[]).length||j.rcIssued){toast('กู้คืนไม่ได้: งานนี้บันทึกรับเงินใหม่ไปแล้ว — ถ้าต้องการใช้ของเดิม ให้ยกเลิกรับเงินอันใหม่ก่อน','err');return false;}
+    if((j.installments||[]).length){toast('กู้คืนไม่ได้: งานนี้เปลี่ยนเป็นวางบิลแบ่งงวดแล้ว','err');return false;}
+    j.payments=tClone(d.payments||[]);j.rcIssued=(d.rcIssued!==false);msg='กู้คืนใบเสร็จของงาน '+j.id+' แล้ว';}
+   const jid=j.id;open=back=()=>openJob(jid);
+  }
+  else if(t.type==='exp'){const e=tClone(d.exp);if(!e||!e.id)throw new Error('ข้อมูลรายจ่ายไม่ครบ');
+   if(state.expenses.some(x=>x.id===e.id))notes.push('รายการนี้มีอยู่ในระบบแล้ว');else state.expenses.push(e);
+   msg='กู้คืนรายจ่ายแล้ว';open=()=>openExp(e.id);}
+  else if(t.type==='iv'){const e=tClone(d.iv);if(!e||!e.id)throw new Error('ข้อมูลภาษีซื้อไม่ครบ');state.inputVat=state.inputVat||[];
+   if(state.inputVat.some(x=>x.id===e.id))notes.push('รายการนี้มีอยู่ในระบบแล้ว');else state.inputVat.push(e);
+   msg='กู้คืนภาษีซื้อแล้ว';open=()=>openInputVat(e.id);}
+  else if(t.type==='stmt'){const rows=(d.rows||[]).map(tClone).filter(r=>r&&r.id);let a=0;
+   rows.forEach(r=>{if(!state.statements.some(x=>x.id===r.id)){state.statements.push(r);a++;}});
+   if(a<rows.length)notes.push('มีอยู่ในระบบแล้ว '+(rows.length-a)+' รายการ');
+   msg='กู้คืนรายการเดินบัญชี '+a+' รายการแล้ว';const one=rows.length===1?rows[0].id:null;open=one?(()=>openStmt(one)):(()=>go('statement'));}
+  else if(t.type==='payee'){const pp=tClone(d.payee);if(!pp||!pp.id)throw new Error('ข้อมูลผู้รับเงินไม่ครบ');state.payees=state.payees||[];
+   if(state.payees.some(x=>x.id===pp.id))notes.push('ผู้รับเงินรายนี้มีอยู่ในระบบแล้ว');else state.payees.push(pp);
+   let re=0;(d.refs||[]).forEach(eid=>{const e=state.expenses.find(x=>x.id===eid);if(e&&!e.payeeId){e.payeeId=pp.id;re++;}});
+   if(re)notes.push('ผูกกลับกับรายจ่าย '+re+' รายการ');
+   msg='กู้คืนผู้รับเงินแล้ว';open=()=>openPayee(pp.id);back=()=>openPayeeList();}
+  else throw new Error('ไม่รู้จักประเภท '+t.type);
+ }catch(err){console.log(err);toast('กู้คืนไม่สำเร็จ: ข้อมูลในถังขยะไม่สมบูรณ์','err');return false;}
+ const k=L.indexOf(t);if(k>=0)L.splice(k,1);
+ save();
+ const o=document.getElementById('overlay');const view=o.dataset.view||'';const wasOpen=o.classList.contains('show');
+ if(mode!=='undo')closeModal();
+ render();
+ toast(msg+(notes.length?' — '+notes.join(' · '):''),notes.length?'warn':'ok');
+ if(mode==='open'&&open)setTimeout(open,60);
+ else if(mode==='undo'&&back){
+  /* กลับไปหน้าต่างเดิม เฉพาะเมื่อไม่ได้เปิดฟอร์มอื่นค้างไว้ — ไม่ทับสิ่งที่ผู้ใช้กำลังกรอก */
+  const ok=!wasOpen||(t.type==='payee'?view==='payees':view.indexOf('job:')===0);
+  if(ok)setTimeout(back,60);}
+ return true;}
+/* เลขงานที่จะกู้คืนมีงานอื่นใช้อยู่แล้ว — ให้ผู้ใช้เห็นทั้งสองฝั่งแล้วเลือกเอง ไม่ตัดสินใจแทน */
+function askJobClash(t,j,ex,mode){const same=sameJob(ex,j);const nid=freeJobId(j);
+ const line=x=>{let tot='';try{tot=B(compute(x).total);}catch(e){}return esc(((cust(x.customerCode)||{}).name||x.customerCode||'—')+' · เสนอราคา '+dTH(x.qtDate)+' · ยอดรวม '+tot);};
+ modal(`<div class="mh"><h3>เลขที่ ${esc(j.id)} มีอยู่ในระบบแล้ว</h3><button class="x" onclick="closeModal()">✕</button></div>
+ <div class="mb"><div style="font-size:13px;line-height:1.8">
+  <div style="padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px"><b>ในระบบตอนนี้</b><br>${line(ex)}</div>
+  <div style="padding:10px 12px;border:1px solid var(--line);border-radius:10px"><b>ในถังขยะ</b><br>${line(j)}</div></div>
+  ${same?`<div style="margin-top:12px;background:#fff8e6;border:1px solid #ffe1a6;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.7;color:#8a6100"><b>ดูเหมือนเป็นงานเดียวกัน</b> (ลูกค้า วันที่ และยอดตรงกัน) — ถ้ากู้คืนจะมีงานซ้ำ 2 รายการ และยอดขาย/ภาษีจะถูกนับซ้ำ</div>`:''}
+  <div style="margin-top:12px;font-size:13px;color:var(--ink-2)">ถ้ากู้คืน งานจากถังขยะจะได้เลขใหม่เป็น <b>${esc(nid)}</b></div></div>
+ <div class="mf" style="flex-wrap:wrap;gap:8px"><button class="btn btn-g" onclick="trashOpenClash('${t.id}')">เปิดงานที่มีอยู่</button><button class="btn btn-p" onclick="restoreTrash('${t.id}','${mode==='open'?'open':'quiet'}',true)">${I.restore}กู้คืนเป็นเลข ${esc(nid)}</button></div>`);}
+function trashOpenClash(tid){const t=trashList().find(x=>x.id===tid);const id=t&&t.data&&t.data.job&&t.data.job.id;closeModal();if(id)openJob(id);}
+function purgeTrash(tid){const t=trashList().find(x=>x.id===tid);if(!t)return;
+ modal(`<div class="mh"><h3>ลบถาวร</h3><button class="x" onclick="closeModal()">✕</button></div>
+ <div class="mb">ต้องการลบรายการนี้ออกจากถังขยะอย่างถาวรใช่หรือไม่? <b>ลบถาวรแล้วจะกู้คืนไม่ได้อีก</b>
+ <div style="margin-top:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;line-height:1.7;font-size:13px"><span class="pill mute">${esc(TRASH_T[t.type]||t.type)}</span> <b>${esc(t.label)}</b>${t.sub?'<br><span style="color:var(--muted)">'+esc(t.sub)+'</span>':''}</div></div>
+ <div class="mf"><button class="btn btn-g" onclick="closeModal()">ยกเลิก</button><button class="btn btn-d" onclick="doPurgeTrash('${t.id}')">${I.trash}ลบถาวร</button></div>`);}
+function doPurgeTrash(tid){const L=trashList();const k=L.findIndex(x=>x.id===tid);if(k>=0)L.splice(k,1);save();closeModal();render();toast('ลบถาวรแล้ว','ok');}
+function emptyTrash(){const n=trashList().length;if(!n){toast('ถังขยะว่างอยู่แล้ว','ok');return;}
+ modal(`<div class="mh"><h3>ล้างถังขยะ</h3><button class="x" onclick="closeModal()">✕</button></div>
+ <div class="mb">ต้องการลบรายการทั้งหมด <b>${n}</b> รายการในถังขยะอย่างถาวรใช่หรือไม่?<div style="margin-top:12px;background:#fff5f2;border:1px solid #ffd6c9;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.7;color:#8a2b12"><b>ล้างแล้วจะกู้คืนไม่ได้อีก</b> และเลขที่เอกสารที่ถูกกันไว้จะกลับมาให้งานใหม่ใช้ได้</div></div>
+ <div class="mf"><button class="btn btn-g" onclick="closeModal()">ยกเลิก</button><button class="btn btn-d" onclick="doEmptyTrash()">${I.trash}ล้างถังขยะ ${n} รายการ</button></div>`);}
+function doEmptyTrash(){state.trash=[];save();closeModal();render();toast('ล้างถังขยะแล้ว','ok');}
+/* เปลี่ยนรหัสลูกค้า: งานของลูกค้ารายนี้ที่อยู่ในถังขยะต้องเปลี่ยนตาม ไม่งั้นกู้คืนแล้วจะไม่มีเจ้าของ */
+function trashRenameCust(orig,code){const ren=id=>(id&&String(id).slice(0,orig.length+1)===orig+'-')?code+String(id).slice(orig.length):id;
+ trashList().forEach(t=>{const d=t.data||{};
+  if(t.type==='job'&&d.job&&d.job.customerCode===orig){d.job.customerCode=code;d.job.id=ren(d.job.id);t.label=jobTrashLabel(d.job);}
+  else if((t.type==='inst'||t.type==='rc')&&d.jobId){const nid=ren(d.jobId);
+   if(nid!==d.jobId&&state.jobs.some(j=>j.id===nid&&j.customerCode===code)){t.label=String(t.label).split(d.jobId).join(nid);d.jobId=nid;}}});}
+let trashFilter='all';
+function viewTrash(){trashSweep();const L=trashList();
+ const cnt={all:L.length};L.forEach(t=>{cnt[t.type]=(cnt[t.type]||0)+1;});
+ if(trashFilter!=='all'&&!cnt[trashFilter])trashFilter='all';
+ const chip=(k,l)=>`<button class="chip-f ${trashFilter===k?'on':''}" onclick="trashFilter='${k}';viewTrash()">${l}<span class="c">${cnt[k]||0}</span></button>`;
+ let html=`<div class="card" style="padding:14px 18px;margin-bottom:14px;background:var(--brand-100);border-color:#cfe0f8;font-size:13px;line-height:1.8;color:#2560a8">ทุกอย่างที่กดลบจะถูกย้ายมาไว้ที่นี่ <b>${TRASH_DAYS} วัน</b> แล้วจึงลบถาวรอัตโนมัติ · กด <b>กู้คืน &amp; เปิด</b> เพื่อนำกลับไปแก้ไขต่อ · เลขที่เอกสารที่อยู่ในถังขยะจะถูกกันไว้ ไม่ถูกนำไปใช้ซ้ำจนกว่าจะลบถาวร</div>`;
+ if(!L.length){html+=`<div class="card empty">${I.trash}<b>ถังขยะว่างเปล่า</b>ยังไม่มีรายการที่ถูกลบ</div>`;document.getElementById('view').innerHTML=html;return;}
+ html+=`<div class="chips">${chip('all','ทั้งหมด')}${Object.keys(TRASH_T).filter(k=>cnt[k]).map(k=>chip(k,TRASH_T[k])).join('')}</div>`;
+ const rows=L.filter(t=>trashFilter==='all'||t.type===trashFilter).slice().sort((a,b)=>(b.at||0)-(a.at||0));
+ html+=`<div class="card tbl-wrap"><table class="tbl"><thead><tr><th>ประเภท</th><th>รายการ</th><th>ลบเมื่อ</th><th>ลบถาวรใน</th><th style="text-align:right">การทำงาน</th></tr></thead><tbody>`;
+ rows.forEach(t=>{const left=Math.max(0,Math.ceil(((t.at||0)+TRASH_DAYS*86400000-Date.now())/86400000));
+  html+=`<tr><td><span class="pill mute" style="white-space:nowrap">${esc(TRASH_T[t.type]||t.type)}</span></td><td style="min-width:230px"><div style="font-weight:600">${esc(t.label)}</div>${t.sub?`<div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(t.sub)}</div>`:''}</td><td class="mono" style="white-space:nowrap">${esc(dtTH(t.at))}</td><td style="white-space:nowrap;${left<=7?'color:var(--crit);font-weight:600':''}">${left} วัน</td><td style="text-align:right;white-space:nowrap"><div style="display:inline-flex;gap:6px;align-items:center"><button class="btn btn-p btn-sm" onclick="restoreTrash('${t.id}','open')">${I.restore}กู้คืน &amp; เปิด</button><button class="btn btn-g btn-sm" onclick="restoreTrash('${t.id}','quiet')">กู้คืน</button><button class="btn btn-g btn-sm" style="color:var(--crit)" title="ลบถาวร" onclick="purgeTrash('${t.id}')">${I.trash}</button></div></td></tr>`;});
+ html+=`</tbody></table></div>`;
+ document.getElementById('view').innerHTML=html;}
+
+/* เปิดหน้าต่างงาน/รายชื่อผู้รับเงิน พร้อมจำว่าตอนนี้เปิดอะไรอยู่ (ใช้ตอนกด “เลิกทำ” จะได้กลับมาที่เดิม ไม่ไปทับฟอร์มอื่น) */
+function openJob(id){if(!state.jobs.find(x=>x.id===id)){toast('ไม่พบงาน '+id+' แล้ว (อาจถูกลบ หรือซิงค์จากเครื่องอื่น)','err');return;}
+ _openJob(id);const o=document.getElementById('overlay');if(o.classList.contains('show'))o.dataset.view='job:'+id;}
+function openPayeeList(){_openPayeeList();const o=document.getElementById('overlay');if(o.classList.contains('show'))o.dataset.view='payees';}
 /* ============ MODALS ============ */
-function closeModal(){document.getElementById('overlay').classList.remove('show');document.getElementById('overlay').innerHTML='';}
-function modal(html,wide){document.getElementById('overlay').innerHTML=`<div class="modal ${wide?'wide':''}">${html}</div>`;document.getElementById('overlay').classList.add('show');}
+function closeModal(){const o=document.getElementById('overlay');o.classList.remove('show');o.innerHTML='';o.dataset.view='';}
+function modal(html,wide){const o=document.getElementById('overlay');o.dataset.view='';o.innerHTML=`<div class="modal ${wide?'wide':''}">${html}</div>`;o.classList.add('show');}
 /* ปิดหน้าต่างได้ทางปุ่ม ✕ (หรือปุ่มยกเลิก/ปิดในหน้าต่าง) เท่านั้น
    คลิกพื้นหลังหรือกด Esc จะไม่ปิด เพื่อไม่ให้ข้อมูลที่กำลังกรอกหายกลางคัน */
 function nudgeModal(){const o=document.getElementById('overlay');if(!o||!o.classList.contains('show'))return false;
@@ -1440,6 +1634,7 @@ function saveCust(edit){const g=k=>document.getElementById('c_'+k).value.trim();
   state.customers[i]=obj;
   if(code!==orig){
    let n=0;state.jobs.forEach(j=>{if(j.customerCode===orig){j.customerCode=code;if(j.id&&j.id.slice(0,orig.length+1)===orig+'-')j.id=code+j.id.slice(orig.length);n++;}});
+   try{trashRenameCust(orig,code);}catch(e){}
    save();closeModal();render();toast('เปลี่ยนรหัสเป็น '+code+' แล้ว'+(n?' (อัปเดตเอกสาร '+n+' รายการ)':''),'ok');return;}}
  else state.customers.push(obj);
  save();closeModal();render();toast('บันทึกลูกค้าแล้ว','ok');}
@@ -1447,13 +1642,16 @@ let pendDelCust='';
 function delCust(code){pendDelCust=code;const n=state.jobs.filter(j=>j.customerCode===code).length;const cu=cust(code)||{name:code};
  modal(`<div class="mh"><h3>ยืนยันการลบลูกค้า</h3><button class="x" onclick="closeModal()">✕</button></div>
  <div class="mb">ต้องการลบลูกค้า <b>${esc(code)}</b> — ${esc(cu.name||'')} ใช่หรือไม่?
- ${n?`<div style="margin-top:14px;background:#fff5f2;border:1px solid #ffd6c9;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.7;color:#8a2b12"><b>⚠️ ลูกค้ารายนี้มีงาน/เอกสารอยู่ ${n} รายการ</b><br>ถ้าลบพร้อมเอกสาร ใบเสนอราคา ใบวางบิล ใบเสร็จ และประวัติการรับเงินทั้งหมดของลูกค้ารายนี้จะถูกลบถาวร และยอดขาย/ภาษีในรายงานจะเปลี่ยนตาม<br><b>แนะนำ:</b> ถ้าแค่ไม่อยากเห็นในรายการ ให้กด “ยกเลิก” แล้วเก็บไว้ดีกว่า</div>`:''}
+ ${n?`<div style="margin-top:14px;background:#fff5f2;border:1px solid #ffd6c9;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.7;color:#8a2b12"><b>⚠️ ลูกค้ารายนี้มีงาน/เอกสารอยู่ ${n} รายการ</b><br>ถ้าลบพร้อมเอกสาร ใบเสนอราคา ใบวางบิล ใบเสร็จ และประวัติการรับเงินทั้งหมดของลูกค้ารายนี้จะถูกย้ายไปถังขยะพร้อมกัน และยอดขาย/ภาษีในรายงานจะเปลี่ยนตาม (กู้คืนกลับมาครบทั้งชุดได้ภายใน ${TRASH_DAYS} วัน)<br><b>แนะนำ:</b> ถ้าแค่ไม่อยากเห็นในรายการ ให้กด “ยกเลิก” แล้วเก็บไว้ดีกว่า</div>`:`<div style="margin-top:10px;font-size:13px;color:var(--muted)">ลูกค้าจะถูกย้ายไปถังขยะ กู้คืนได้ภายใน ${TRASH_DAYS} วัน</div>`}
  </div>
  <div class="mf"><button class="btn btn-g" onclick="closeModal()">ยกเลิก</button>${n?`<button class="btn btn-d" onclick="doDelCust(true)">${I.trash}ลบลูกค้า + เอกสาร ${n} รายการ</button>`:`<button class="btn btn-d" onclick="doDelCust(false)">${I.trash}ลบลูกค้า</button>`}</div>`);}
-function doDelCust(withJobs){const code=pendDelCust;if(!code)return;let n=0;
- if(withJobs){n=state.jobs.filter(j=>j.customerCode===code).length;state.jobs=state.jobs.filter(j=>j.customerCode!==code);}
+function doDelCust(withJobs){const code=pendDelCust;if(!code)return;
+ const cu=cust(code);const jobs=withJobs?state.jobs.filter(j=>j.customerCode===code):[];const n=jobs.length;
+ /* ลูกค้า + เอกสารทั้งหมดของลูกค้า = 1 รายการในถังขยะ กู้คืนแล้วได้กลับมาครบชุด */
+ const tid=cu?toTrash('cust',code+' · '+(cu.name||''),n?('พร้อมเอกสาร '+n+' รายการ: '+jobs.slice(0,3).map(j=>j.id).join(', ')+(n>3?' …':'')):'ไม่มีเอกสาร',{cust:cu,jobs}):null;
+ if(withJobs){state.jobs=state.jobs.filter(j=>j.customerCode!==code);jobs.forEach(j=>docSel.delete(j.id));}
  state.customers=state.customers.filter(c=>c.code!==code);pendDelCust='';
- save();closeModal();render();toast('ลบลูกค้าแล้ว'+(n?' พร้อมเอกสาร '+n+' รายการ':''),'ok');}
+ save();closeModal();render();toastUndo('ย้ายลูกค้าไปถังขยะแล้ว'+(n?' พร้อมเอกสาร '+n+' รายการ':''),tid);}
 
 /* ----- QT create/edit ----- */
 let draftItems=[];
@@ -1491,12 +1689,12 @@ function renderItems(){const tb=document.getElementById('itemRows');tb.innerHTML
 function addItem(){draftItems.push({desc:'',qty:1,unit:'',price:0});renderItems();}
 function calcSum(){const sub=draftItems.reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.price)||0),0);const el=document.getElementById('q_vat');const rate=(el&&!el.checked)?0:state.settings.vatRate;const vat=Math.round(sub*rate*100)/100;document.getElementById('sumBox').innerHTML=`<div class="r"><span>รวมเป็นเงิน</span><b>${B(sub)}</b></div><div class="r"><span>ภาษีมูลค่าเพิ่ม ${(rate*100).toFixed(0)}%</span><b>${B(vat)}</b></div><div class="r tot"><span>ยอดรวมทั้งสิ้น</span><span>${B(sub+vat)}</span></div>`;}
 function saveQT(id){const items=draftItems.filter(i=>i.desc.trim()||Number(i.price)>0).map(i=>({desc:i.desc.trim(),qty:Number(i.qty)||0,unit:i.unit.trim(),price:Number(i.price)||0}));if(!items.length){toast('กรุณาเพิ่มอย่างน้อย 1 รายการ','err');return;}const note=document.getElementById('q_note').value,status=document.getElementById('q_status').value;const vat=document.getElementById('q_vat')?document.getElementById('q_vat').checked:true;const project=document.getElementById('q_project')?document.getElementById('q_project').value.trim():'';const terms=document.getElementById('q_terms')?document.getElementById('q_terms').value:'';
- if(id){const j=state.jobs.find(x=>x.id===id);j.items=items;j.note=note;j.status=status;j.vat=vat;j.project=project;j.terms=terms;toast('แก้ไขใบเสนอราคาแล้ว','ok');}
+ if(id){const j=state.jobs.find(x=>x.id===id);if(!j){toast('ไม่พบงานนี้แล้ว (อาจถูกลบ หรือซิงค์จากเครื่องอื่น) — ยังไม่ได้บันทึก','err');return;}j.items=items;j.note=note;j.status=status;j.vat=vat;j.project=project;j.terms=terms;toast('แก้ไขใบเสนอราคาแล้ว','ok');}
  else{const code=document.getElementById('q_cust').value,date=parseDMY(document.getElementById('q_date').value)||todayISO();if(!code){toast('กรุณาเลือกลูกค้า','err');return;}const nid=nextId(code,date);state.jobs.push({id:nid,customerCode:code,qtDate:date,status,note,terms,items,vat,project,inv:null,payments:[],rcIssued:false});toast('สร้างใบเสนอราคา '+nid,'ok');}
  save();closeModal();render();}
 
 /* ----- job detail ----- */
-function openJob(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);const cu=cust(j.customerCode);
+function _openJob(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);const cu=cust(j.customerCode);
  const hasInv=j.inv&&j.inv.issued;const insts=j.installments||[];const hasInst=insts.length>0;
  const payPill=c.pay==='paid'?'<span class="pill good"><span class="dot"></span>ชำระแล้ว</span>':c.pay==='partial'?'<span class="pill warn"><span class="dot"></span>ชำระบางส่วน</span>':c.pay==='pending'?(c.overdue>0?`<span class="pill crit"><span class="dot"></span>เกินกำหนด ${c.overdue} วัน</span>`:'<span class="pill warn"><span class="dot"></span>รอชำระ</span>'):'<span class="pill mute"><span class="dot"></span>ยังไม่วางบิล</span>';
  const itemRows=j.items.map((it,n)=>`<tr><td class="c">${n+1}</td><td>${esc(it.desc)}</td><td class="c">${B0(it.qty)}</td><td class="c">${esc(it.unit)}</td><td class="num">${B(it.price)}</td><td class="num">${B(it.qty*it.price)}</td></tr>`).join('');
@@ -1562,7 +1760,11 @@ function toggleHold(id){const j=state.jobs.find(x=>x.id===id);if(!j)return;
 function doHold(id){const j=state.jobs.find(x=>x.id===id);if(!j)return;const el=document.getElementById('hold_note');
  j.hold=true;j.holdNote=el?el.value.trim():'';j.holdAt=todayISO();
  save();closeModal();render();toast('พักงานนี้ไว้แล้ว (HOLD)','ok');setTimeout(()=>openJob(id),50);}
-function delJob(id){modal(`<div class="mh"><h3>ยืนยันการลบ</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการลบงาน <b>${esc(id)}</b> และเอกสารทั้งหมดที่เกี่ยวข้องใช่หรือไม่?</div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">ยกเลิก</button><button class="btn btn-d" onclick="state.jobs=state.jobs.filter(j=>j.id!=='${id}');save();closeModal();render();toast('ลบงานแล้ว','ok')">ลบ</button></div>`);}
+function delJob(id){modal(`<div class="mh"><h3>ยืนยันการลบ</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการลบงาน <b>${esc(id)}</b> และเอกสารทั้งหมดที่เกี่ยวข้องใช่หรือไม่?<div style="margin-top:10px;font-size:13px;color:var(--muted)">งานจะถูกย้ายไปถังขยะพร้อมใบวางบิล ใบเสร็จ และประวัติรับเงินทั้งหมด กู้คืนได้ภายใน ${TRASH_DAYS} วัน</div></div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">ยกเลิก</button><button class="btn btn-d" onclick="doDelJob('${id}')">${I.trash}ลบ</button></div>`);}
+function doDelJob(id){const j=state.jobs.find(x=>x.id===id);if(!j){closeModal();render();return;}
+ const tid=toTrash('job',jobTrashLabel(j),jobTrashSub(j),{job:j});
+ state.jobs=state.jobs.filter(x=>x.id!==id);docSel.delete(id);
+ save();closeModal();render();toastUndo('ย้ายงาน '+id+' ไปถังขยะแล้ว',tid);}
 
 /* ----- issue invoice ----- */
 function issueInv(id){const j=state.jobs.find(x=>x.id===id);
@@ -1603,10 +1805,16 @@ function payNet(p){const a=Number((document.getElementById(p+'_amount')||{}).val
  el.innerHTML=`ลูกค้าโอนจริง <b>${B(a)}</b> + หัก ณ ที่จ่าย <b>${B(w)}</b> = ถือว่าชำระแล้ว <b>${B(paid)}</b>`+
   (Math.abs(left)<0.005?' · <span style="color:var(--good-ink)">ปิดบิลครบ ✓</span>':(left>0?` · <span style="color:var(--crit)">ยังขาดอีก ${B(left)}</span>`:` · <span style="color:var(--crit)">เกินยอดบิล ${B(-left)}</span>`));}
 function doPay(id){const j=state.jobs.find(x=>x.id===id);const amt=Number(document.getElementById('p_amount').value)||0,wht=Number(document.getElementById('p_wht').value)||0;if(amt<=0&&wht<=0){toast('กรุณาระบุจำนวนเงิน','err');return;}if(!Array.isArray(j.payments))j.payments=[];j.payments.push({date:parseDMY(document.getElementById('p_date').value)||todayISO(),method:document.getElementById('p_method').value,amount:amt,wht:wht,note:document.getElementById('p_note').value});j.rcIssued=true;save();closeModal();render();toast('บันทึกรับเงินและออกใบเสร็จแล้ว','ok');setTimeout(()=>openJob(id),50);}
-function unpayJob(id){modal(`<div class="mh"><h3>ยกเลิกการรับเงิน</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการเปลี่ยนสถานะกลับเป็น “ยังไม่ได้รับเงิน” ใช่หรือไม่? ระบบจะลบประวัติการรับเงินและยกเลิกใบเสร็จของงานนี้ (สำหรับกรณีกดผิด)</div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">กลับ</button><button class="btn btn-d" onclick="doUnpay('${id}')">↩ ยืนยันยกเลิกรับเงิน</button></div>`);}
-function doUnpay(id){const j=state.jobs.find(x=>x.id===id);j.payments=[];j.rcIssued=false;save();closeModal();render();toast('เปลี่ยนกลับเป็นยังไม่ได้รับเงินแล้ว','ok');setTimeout(()=>openJob(id),50);}
-function unpayInst(id,idx){const j=state.jobs.find(x=>x.id===id);const it=(j.installments||[])[idx];if(!it||!it.rc)return;modal(`<div class="mh"><h3>ยกเลิกรับเงินงวดที่ ${it.no}</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">เปลี่ยนงวดที่ <b>${it.no}</b> กลับเป็น “ยังไม่ได้รับเงิน” และยกเลิกใบเสร็จของงวดนี้ ใช่หรือไม่? (สำหรับกรณีกดผิด)</div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">กลับ</button><button class="btn btn-d" onclick="doUnpayInst('${id}',${idx})">↩ ยืนยัน</button></div>`);}
-function doUnpayInst(id,idx){const j=state.jobs.find(x=>x.id===id);if(j.installments&&j.installments[idx])j.installments[idx].rc=null;save();closeModal();render();toast('เปลี่ยนงวดกลับเป็นยังไม่ได้รับเงินแล้ว','ok');setTimeout(()=>openJob(id),50);}
+function unpayJob(id){modal(`<div class="mh"><h3>ยกเลิกการรับเงิน</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการเปลี่ยนสถานะกลับเป็น “ยังไม่ได้รับเงิน” ใช่หรือไม่? ระบบจะยกเลิกใบเสร็จของงานนี้ (สำหรับกรณีกดผิด)<div style="margin-top:10px;font-size:13px;color:var(--muted)">ประวัติการรับเงินเดิมจะเก็บไว้ในถังขยะ กู้คืนได้ภายใน ${TRASH_DAYS} วัน</div></div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">กลับ</button><button class="btn btn-d" onclick="doUnpay('${id}')">↩ ยืนยันยกเลิกรับเงิน</button></div>`);}
+function doUnpay(id){const j=state.jobs.find(x=>x.id===id);if(!j){closeModal();render();return;}
+ const pays=j.payments||[];let tid=null;
+ if(pays.length||j.rcIssued){const got=pays.reduce((a,p)=>a+(Number(p.amount)||0),0);const last=pays[pays.length-1];
+  tid=toTrash('rc','ใบเสร็จ '+docNumOf(j,'RC')+' · '+((cust(j.customerCode)||{}).name||j.customerCode||''),(pays.length?('รับเงิน '+pays.length+' ครั้ง · '+B(got)+(last&&last.date?' · '+dTH(last.date):'')):'ใบเสร็จไม่มีรายการรับเงิน'),{jobId:j.id,payments:pays,rcIssued:!!j.rcIssued});}
+ j.payments=[];j.rcIssued=false;save();closeModal();render();toastUndo('เปลี่ยนกลับเป็นยังไม่ได้รับเงินแล้ว — ใบเสร็จเดิมอยู่ในถังขยะ',tid);setTimeout(()=>openJob(id),50);}
+function unpayInst(id,idx){const j=state.jobs.find(x=>x.id===id);const it=(j.installments||[])[idx];if(!it||!it.rc)return;modal(`<div class="mh"><h3>ยกเลิกรับเงินงวดที่ ${it.no}</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">เปลี่ยนงวดที่ <b>${it.no}</b> กลับเป็น “ยังไม่ได้รับเงิน” และยกเลิกใบเสร็จของงวดนี้ ใช่หรือไม่? (สำหรับกรณีกดผิด)<div style="margin-top:10px;font-size:13px;color:var(--muted)">ข้อมูลรับเงินเดิมจะเก็บไว้ในถังขยะ กู้คืนได้ภายใน ${TRASH_DAYS} วัน</div></div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">กลับ</button><button class="btn btn-d" onclick="doUnpayInst('${id}',${idx})">↩ ยืนยัน</button></div>`);}
+function doUnpayInst(id,idx){const j=state.jobs.find(x=>x.id===id);const it=j&&j.installments&&j.installments[idx];if(!it){closeModal();render();return;}
+ let tid=null;if(it.rc)tid=toTrash('rc','ใบเสร็จ '+docNumOf(j,'RC',it.no)+' · '+((cust(j.customerCode)||{}).name||j.customerCode||''),'งวดที่ '+it.no+' · รับ '+B(it.rc.amount)+(it.rc.date?' · '+dTH(it.rc.date):''),{jobId:j.id,instNo:it.no,rc:it.rc});
+ it.rc=null;save();closeModal();render();toastUndo('เปลี่ยนงวดที่ '+it.no+' กลับเป็นยังไม่ได้รับเงินแล้ว — ใบเสร็จเดิมอยู่ในถังขยะ',tid);setTimeout(()=>openJob(id),50);}
 /* ----- installments (วางบิลแบ่งงวด) ----- */
 function toInst(id){const j=state.jobs.find(x=>x.id===id);const c=compute(j);
  if(c.settled>0){toast('งานนี้รับเงินไปแล้ว เปลี่ยนเป็นแบ่งงวดไม่ได้','err');return;}
@@ -1702,8 +1910,11 @@ function saveInst(id){const j=state.jobs.find(x=>x.id===id);
  save();closeModal();render();toast(editing?('แก้ไขงวดที่ '+no+' แล้ว'):('เพิ่มงวดที่ '+no+' แล้ว'),'ok');setTimeout(()=>openJob(id),50);}
 function delInst(id,idx){const j=state.jobs.find(x=>x.id===id);const it=(j.installments||[])[idx];if(!it)return;
  if(it.rc&&it.rc.issued){toast('งวดนี้ออกใบเสร็จแล้ว ลบไม่ได้','err');return;}
- modal(`<div class="mh"><h3>ลบงวดวางบิล</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการลบงวดที่ <b>${it.no}</b> (${instPctOf(j,it)}%) ของงาน <b>${esc(id)}</b> ใช่หรือไม่?</div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">ยกเลิก</button><button class="btn btn-d" onclick="doDelInst('${id}',${idx})">${I.trash}ลบงวด</button></div>`);}
-function doDelInst(id,idx){const j=state.jobs.find(x=>x.id===id);j.installments.splice(idx,1);save();closeModal();render();toast('ลบงวดแล้ว','ok');setTimeout(()=>openJob(id),50);}
+ modal(`<div class="mh"><h3>ลบงวดวางบิล</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการลบงวดที่ <b>${it.no}</b> (${instPctOf(j,it)}%) ของงาน <b>${esc(id)}</b> ใช่หรือไม่?<div style="margin-top:10px;font-size:13px;color:var(--muted)">งวดนี้จะถูกย้ายไปถังขยะ กู้คืนได้ภายใน ${TRASH_DAYS} วัน</div></div><div class="mf"><button class="btn btn-g" onclick="openJob('${id}')">ยกเลิก</button><button class="btn btn-d" onclick="doDelInst('${id}',${idx})">${I.trash}ลบงวด</button></div>`);}
+function doDelInst(id,idx){const j=state.jobs.find(x=>x.id===id);const it=j&&j.installments&&j.installments[idx];if(!it){closeModal();render();return;}
+ if(it.rc&&it.rc.issued){toast('งวดนี้ออกใบเสร็จแล้ว ลบไม่ได้','err');return;}
+ const tid=toTrash('inst',j.id+' · งวดที่ '+it.no,((cust(j.customerCode)||{}).name||j.customerCode||'')+' · '+instPctOf(j,it)+'% · '+B(instTot(j,it))+(it.date?' · วางบิล '+dTH(it.date):''),{jobId:j.id,inst:it});
+ j.installments.splice(idx,1);save();closeModal();render();toastUndo('ย้ายงวดที่ '+it.no+' ไปถังขยะแล้ว',tid);setTimeout(()=>openJob(id),50);}
 function payInst(id,idx){const j=state.jobs.find(x=>x.id===id);const it=(j.installments||[])[idx];if(!it)return;const amt=instTot(j,it);
  modal(`<div class="mh"><h3>รับเงินงวดที่ ${it.no} — ${j.id}</h3><button class="x" onclick="closeModal()">✕</button></div>
  <div class="mb"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:10px;padding:12px 14px;margin-bottom:16px"><span>งวดที่ ${it.no} (${instPctOf(j,it)}%)</span><span style="color:var(--brand-d)">ยอดบิลงวดนี้ <b>${B(amt)}</b></span></div>
@@ -1885,8 +2096,11 @@ const STMTCATS=['รับชำระจากลูกค้า','เงิน
 function toggleSel(id,ch){if(ch)stmtSel.add(id);else stmtSel.delete(id);const el=document.getElementById('selBar');if(el)el.innerHTML=selBarHtml();}
 function selAll(ch){curStmtRows().forEach(r=>{if(ch)stmtSel.add(r.id);else stmtSel.delete(r.id);});viewStatement();}
 function selBarHtml(){const n=stmtSel.size;if(!n)return'';return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--brand-100);border:1px solid #cfe0f8;border-radius:10px;margin-bottom:12px;flex-wrap:wrap"><b style="color:var(--brand-d)">เลือกแล้ว ${n} รายการ</b><button class="btn btn-d btn-sm" onclick="delSelStmt()">${I.trash}ลบที่เลือก</button><button class="btn btn-g btn-sm" onclick="stmtSel.clear();viewStatement()">ยกเลิกการเลือก</button></div>`;}
-function delSelStmt(){const n=stmtSel.size;if(!n)return;modal(`<div class="mh"><h3>ยืนยันการลบ</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการลบรายการเดินบัญชีที่เลือก <b>${n}</b> รายการใช่หรือไม่? การลบนี้ย้อนกลับไม่ได้ (แนะนำสำรอง Excel ก่อน)</div><div class="mf"><button class="btn btn-g" onclick="closeModal()">ยกเลิก</button><button class="btn btn-d" onclick="doDelSel()">${I.trash}ลบ ${n} รายการ</button></div>`);}
-function doDelSel(){state.statements=state.statements.filter(t=>!stmtSel.has(t.id));stmtSel.clear();save();closeModal();render();toast('ลบรายการที่เลือกแล้ว','ok');}
+function delSelStmt(){const n=stmtSel.size;if(!n)return;modal(`<div class="mh"><h3>ยืนยันการลบ</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">ต้องการลบรายการเดินบัญชีที่เลือก <b>${n}</b> รายการใช่หรือไม่?<div style="margin-top:10px;font-size:13px;color:var(--muted)">ทั้งชุดจะถูกย้ายไปถังขยะเป็น 1 รายการ กู้คืนกลับมาพร้อมกันได้ภายใน ${TRASH_DAYS} วัน</div></div><div class="mf"><button class="btn btn-g" onclick="closeModal()">ยกเลิก</button><button class="btn btn-d" onclick="doDelSel()">${I.trash}ลบ ${n} รายการ</button></div>`);}
+function doDelSel(){const rows=state.statements.filter(t=>stmtSel.has(t.id));let tid=null;
+ if(rows.length){const ds=rows.map(r=>r.date).filter(Boolean).sort();const ti=rows.reduce((a,r)=>a+(Number(r.moneyIn)||0),0),to=rows.reduce((a,r)=>a+(Number(r.moneyOut)||0),0);
+  tid=toTrash('stmt',rows.length===1?(rows[0].desc||'รายการเดินบัญชี'):('รายการเดินบัญชี '+rows.length+' รายการ'),(ds.length?dTH(ds[0])+(ds[ds.length-1]!==ds[0]?' – '+dTH(ds[ds.length-1]):''):'')+(ti?' · เข้า '+B(ti):'')+(to?' · ออก '+B(to):''),{rows});}
+ state.statements=state.statements.filter(t=>!stmtSel.has(t.id));stmtSel.clear();save();closeModal();render();toastUndo('ย้าย '+rows.length+' รายการไปถังขยะแล้ว',tid);}
 function exportStmtExcel(){try{const rows=curStmtRows();if(!rows.length){toast('ไม่มีรายการให้ส่งออก','err');return;}const asc=rows.slice().reverse();const R=[['วันที่','เวลา','รายละเอียด','หมวดหมู่','ช่องทาง','รายรับ','รายจ่าย']];let ti=0,to=0;asc.forEach(t=>{const mi=Number(t.moneyIn)||0,mo=Number(t.moneyOut)||0;ti+=mi;to+=mo;R.push([t.date,t.time||'',t.desc,t.category||'',t.channel,mi,mo]);});R.push(['','','','','รวม',ti,to]);const ws=XLSX.utils.aoa_to_sheet(R);ws['!cols']=[{wch:12},{wch:8},{wch:40},{wch:18},{wch:14},{wch:14},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'รายรับรายจ่าย');XLSX.writeFile(wb,'รายรับรายจ่าย-'+(stmtMonth==='all'?'ทั้งหมด':stmtMonth)+'.xlsx');toast('ส่งออก Excel แล้ว','ok');}catch(err){console.log(err);toast('ส่งออกไม่สำเร็จ','err');}}
 function viewStatement(){
  const rows=curStmtRows();let ti=0,to=0;rows.forEach(t=>{ti+=Number(t.moneyIn)||0;to+=Number(t.moneyOut)||0;});const net=ti-to;
@@ -2061,7 +2275,7 @@ function importExcel(file){const r=new FileReader();r.onload=e=>{try{const wb=XL
 }catch(err){console.log(err);toast('อ่านไฟล์ Excel ไม่สำเร็จ ตรวจรูปแบบไฟล์','err');}};r.readAsArrayBuffer(file);}
 
 /* ============ ผู้รับเงิน / ภ.ง.ด. (หัก ณ ที่จ่าย) ============ */
-function openPayeeList(){const ps=state.payees||[];
+function _openPayeeList(){const ps=state.payees||[];
  const body=ps.length?`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>ชื่อ</th><th>เลขผู้เสียภาษี</th><th>ประเภท</th><th></th></tr></thead><tbody>`+ps.map(p=>`<tr><td>${esc(p.name)}</td><td class="mono">${p.taxId?esc(p.taxId):'<span style="color:var(--crit)">— ไม่มี —</span>'}</td><td>${p.payeeType==='employee'?'พนักงานประจำ (ภ.ง.ด.1)':'ฟรีแลนซ์/ผู้รับจ้าง (ภ.ง.ด.3)'}</td><td style="text-align:right;white-space:nowrap"><button class="btn btn-g btn-ic btn-sm" onclick="openPayee('${p.id}')">${I.edit}</button> <button class="btn btn-d btn-ic btn-sm" onclick="delPayee('${p.id}')">${I.trash}</button></td></tr>`).join('')+`</tbody></table></div>`:`<div class="card empty" style="padding:26px 10px">${I.users}<b>ยังไม่มีรายชื่อผู้รับเงิน</b>เพิ่มฟรีแลนซ์หรือพนักงานที่จ้างประจำ เพื่อใช้กรอก ภ.ง.ด. อัตโนมัติ</div>`;
  modal(`<div class="mh"><h3>รายชื่อผู้รับเงิน / ผู้ถูกหักภาษี</h3><button class="x" onclick="closeModal()">✕</button></div><div class="mb">${body}</div><div class="mf"><button class="btn btn-g" onclick="closeModal()">ปิด</button><button class="btn btn-p" onclick="openPayee('')">${I.plus}เพิ่มผู้รับเงิน</button></div>`,true);}
 const PND_SECTIONS=[['40(1)','40(1) เงินเดือน ค่าจ้าง'],['40(2)','40(2) ค่าธรรมเนียม/นายหน้า'],['40(3)','40(3) ค่าลิขสิทธิ์'],['40(4)','40(4) ดอกเบี้ย/เงินปันผล'],['3tres','ม.3 เตรส (ค่าจ้างทำของ/บริการ/เช่า/ขนส่ง)'],['other','อื่น ๆ (ระบุเอง)']];
@@ -2086,7 +2300,7 @@ function savePayee(id){const g=k=>document.getElementById('p_'+k).value;const na
  const o={name,taxId:g('taxid').trim(),address:g('addr').trim(),payeeType:g('type'),section:g('section'),incomeDesc:g('incomedesc').trim(),issueType:g('issue'),note:g('note').trim()};
  state.payees=state.payees||[];if(id){const i=state.payees.findIndex(x=>x.id===id);if(i<0){toast('ไม่พบรายการนี้แล้ว (อาจถูกลบ หรือซิงค์จากเครื่องอื่น) — ยังไม่ได้บันทึก','err');return;}o.id=id;state.payees[i]=o;}else{o.id=uid('P');state.payees.push(o);}
  save();closeModal();render();toast('บันทึกผู้รับเงินแล้ว','ok');}
-function delPayee(id){const p=(state.payees||[]).find(x=>x.id===id);if(!p)return;const used=(state.expenses||[]).filter(e=>e.payeeId===id).length;pendDel={t:'payee',id:id};confirmDel('ลบผู้รับเงิน',`<b>${esc(p.name||'')}</b>${p.taxId?'<br>เลขผู้เสียภาษี '+esc(p.taxId):''}`+(used?`<div style="margin-top:10px;background:#fff5f2;border:1px solid #ffd6c9;border-radius:9px;padding:10px 12px;color:#8a2b12;font-size:12.5px;line-height:1.7">⚠️ มีรายจ่ายอ้างอิงผู้รับเงินรายนี้อยู่ <b>${used}</b> รายการ — ถ้าลบ ใบ 50 ทวิ / ภ.ง.ด. ของรายการเหล่านั้นจะไม่มีชื่อ-ที่อยู่-เลขผู้เสียภาษี</div>`:''));}
+function delPayee(id){const p=(state.payees||[]).find(x=>x.id===id);if(!p)return;const used=(state.expenses||[]).filter(e=>e.payeeId===id).length;pendDel={t:'payee',id:id};confirmDel('ลบผู้รับเงิน',`<b>${esc(p.name||'')}</b>${p.taxId?'<br>เลขผู้เสียภาษี '+esc(p.taxId):''}`+(used?`<div style="margin-top:10px;background:#fff5f2;border:1px solid #ffd6c9;border-radius:9px;padding:10px 12px;color:#8a2b12;font-size:12.5px;line-height:1.7">⚠️ มีรายจ่ายอ้างอิงผู้รับเงินรายนี้อยู่ <b>${used}</b> รายการ — ถ้าลบ ใบ 50 ทวิ / ภ.ง.ด. ของรายการเหล่านั้นจะไม่มีชื่อ-ที่อยู่-เลขผู้เสียภาษี (ถ้ากู้คืนจากถังขยะ ระบบจะผูกกลับให้อัตโนมัติ)</div>`:''));}
 function pndIncomeType(e,pay,type){if(pay&&pay.section)return sectionLabel(pay.section,pay.incomeDesc);if(pay&&pay.incomeType)return pay.incomeType;if(type==='1')return 'เงินเดือน ค่าจ้าง ม.40(1)';if((e.category||'')==='ค่าเช่า')return 'ค่าเช่าทรัพย์สิน (ม.3 เตรส)';return 'ค่าจ้างทำของ/รับเหมา/บริการ (ม.3 เตรส)';}
 function expPndType(e){const pay=e.payeeId?(state.payees||[]).find(p=>p.id===e.payeeId):null;if(pay)return pay.payeeType==='employee'?'1':'3';return ((e.category||'')==='เงินเดือน/ค่าแรง')?'1':'3';}
 function pndRows(month,type){const map={};(state.expenses||[]).forEach(e=>{const wht=Number(e.wht)||0;if(wht<=0)return;if(!inMonth(e.date,month))return;if(expPndType(e)!==type)return;const pay=e.payeeId?(state.payees||[]).find(p=>p.id===e.payeeId):null;const rate=Number(e.whtRate)||0;const key=(e.payeeId||('nm:'+(e.payee||'-')))+'|'+rate;if(!map[key])map[key]={name:pay?pay.name:(e.payee||'-'),taxId:pay?(pay.taxId||''):'',address:pay?(pay.address||''):'',incomeType:pndIncomeType(e,pay,type),rate:rate,base:0,tax:0,dates:[],n:0,hasPayee:!!pay,payeeId:e.payeeId||''};const g=map[key];g.base+=Number(e.amount)||0;g.tax+=wht;g.dates.push(e.date);g.n++;});return Object.values(map).map(g=>{g.base=Math.round(g.base*100)/100;g.tax=Math.round(g.tax*100)/100;g.dates.sort();g.date=g.dates[g.dates.length-1];return g;}).sort((a,b)=>a.name<b.name?-1:1);}
